@@ -52,5 +52,25 @@ public class PlayerProfileEntity {
     public Long getId() {
         return id;
     }
-}
 
+    public Long getUserId() {
+        return userId;
+    }
+
+    public String getDisplayName() {
+        return displayName;
+    }
+
+    public String getAvatarUrl() {
+        return avatarUrl;
+    }
+
+    public PresenceStatus getOnlineStatus() {
+        return onlineStatus;
+    }
+
+    public void update(String displayName, String avatarUrl) {
+        this.displayName = displayName;
+        this.avatarUrl = avatarUrl;
+    }
+}

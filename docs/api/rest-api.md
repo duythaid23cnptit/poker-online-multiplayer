@@ -27,20 +27,19 @@ The message is safe for users; stack traces and secrets are never returned. The 
 
 | Method | Path | Purpose | Request / response summary |
 |---|---|---|---|
-| POST | `/auth/register` | Create account/profile | credentials + display name → user summary and authentication result |
-| POST | `/auth/login` | Authenticate | credentials → access/refresh result |
-| POST | `/auth/refresh` | Rotate session credentials | refresh credential → new credentials |
-| POST | `/auth/logout` | Revoke current refresh session | no sensitive response |
-| POST | `/auth/logout-all` | Revoke all user sessions | confirmation |
+| POST | `/auth/register` | Create account/profile atomically | username, password, optional email, display name → safe current-user response (`201`) |
+| POST | `/auth/login` | Authenticate by username | username/password → JWT access token and opaque refresh token |
+| POST | `/auth/refresh` | Issue a new access token | opaque refresh token → JWT access token; no rotation in the Phase 3 baseline |
+| POST | `/auth/logout` | Revoke the supplied refresh token owned by the authenticated principal | bearer access token + refresh token → `204` |
 
-Registration/login endpoints are rate-limited. Username/email enumeration and refresh-token reuse require explicit defenses.
+Registration and login validate input. Login uses a generic invalid-credentials response for unknown usernames and wrong passwords; locked accounts are forbidden. Rate limiting is planned but not implemented in Phase 3.
 
 ## Player and profile
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/me` | Current account/profile and roles |
-| PATCH | `/me/profile` | Update allowed profile fields |
+| GET | `/me` | Current account/profile resolved exclusively from the authenticated principal |
+| PATCH | `/me` | Update only the current user's display name and optional avatar URL |
 | GET | `/players/{playerId}` | Public player summary |
 | GET | `/players/{playerId}/match-history` | Paginated completed sessions/hands visible to requester |
 | GET | `/players/{playerId}/statistics` | Public statistics projection |
@@ -136,7 +135,7 @@ All endpoints require an admin role and produce an audit record.
 ## Deferred contract decisions
 
 - Account identifier/login policy and verification/recovery requirements.
-- Access/refresh token transport, lifetime, rotation, revocation, and CSRF approach.
+- Refresh-token rotation and broader session/device management. Phase 3 returns a non-rotating opaque refresh token, persists only its SHA-256 hash, and revokes it on logout.
 - Cursor format, consistent `400` versus `422`, and formal OpenAPI publication.
 - Buy-in limits, rebuy eligibility/limits, and insufficient-funds/error policy. The Account Chip to Table Chip model itself is approved.
 - Chat retention/moderation, history visibility, and spectator permissions.

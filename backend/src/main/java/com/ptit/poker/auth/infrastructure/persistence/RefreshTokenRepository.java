@@ -8,4 +8,3 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshTokenEntity
 
     Optional<RefreshTokenEntity> findByTokenHash(String tokenHash);
 }
-

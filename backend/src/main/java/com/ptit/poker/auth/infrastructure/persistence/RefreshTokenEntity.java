@@ -44,5 +44,24 @@ public class RefreshTokenEntity {
     public Long getId() {
         return id;
     }
-}
 
+    public Long getUserId() {
+        return userId;
+    }
+
+    public Instant getExpiresAt() {
+        return expiresAt;
+    }
+
+    public Instant getRevokedAt() {
+        return revokedAt;
+    }
+
+    public boolean isUsableAt(Instant instant) {
+        return revokedAt == null && expiresAt.isAfter(instant);
+    }
+
+    public void revoke(Instant revokedAt) {
+        this.revokedAt = revokedAt;
+    }
+}

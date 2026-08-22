@@ -71,8 +71,35 @@ public class UserEntity {
         return username;
     }
 
+    public String getPasswordHash() {
+        return passwordHash;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public Role getRole() {
+        return role;
+    }
+
+    public AccountStatus getAccountStatus() {
+        return accountStatus;
+    }
+
     public long getAccountChips() {
         return accountChips;
     }
-}
 
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public Instant getLastLoginAt() {
+        return lastLoginAt;
+    }
+
+    public void recordLogin(Instant loginAt) {
+        this.lastLoginAt = loginAt;
+    }
+}

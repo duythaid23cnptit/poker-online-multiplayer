@@ -8,4 +8,3 @@ public interface PlayerProfileRepository extends JpaRepository<PlayerProfileEnti
 
     Optional<PlayerProfileEntity> findByUserId(Long userId);
 }
-

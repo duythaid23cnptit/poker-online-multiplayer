@@ -4,7 +4,7 @@ A university Network Programming project for real-time multiplayer Texas Hold'em
 
 ## Current status
 
-Phase 0 architecture is frozen. Phase 2 adds the initial MySQL/Flyway persistence foundation for users, profiles, refresh-token records, rooms, and room players. No application APIs, authentication behavior, room behavior, WebSocket behavior, or poker logic exists yet.
+Phase 0 architecture is frozen. Phase 3 implements the backend authentication and current-profile REST boundary: registration, login, JWT access tokens, hashed opaque refresh tokens, logout, current-user lookup, and own-profile updates. Room behavior, WebSocket behavior, and poker logic are not implemented.
 
 The approved baseline distinguishes persistent Account Chips from Table Chips transferred through server-controlled buy-in/cash-out, and distinguishes a continuous Game Session from each Poker Hand it contains. Room/player lifecycle, 60-second reconnect handling, and authoritative timeout/leave behavior are specified in the architecture documents.
 
@@ -33,7 +33,7 @@ From `backend` on Windows:
 .\mvnw.cmd package
 ```
 
-The default `bootstrap` profile starts without a database connection. To opt into the locally installed MySQL development database, activate the `local` profile and provide `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD` in the process environment. Do not commit credentials.
+The default `bootstrap` profile starts without a database connection and denies application endpoints. To run Phase 3 locally, activate the `local` profile and provide `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, and a Base64-encoded HMAC key in `JWT_SECRET`. Optional `JWT_ACCESS_TOKEN_EXPIRATION` and `JWT_REFRESH_TOKEN_EXPIRATION` values use Spring duration syntax and default to `15m` and `30d`. Do not commit credentials or signing keys.
 
 MySQL integration tests are enabled only when `TEST_DB_URL`, `TEST_DB_USERNAME`, and `TEST_DB_PASSWORD` exist in the current process. `TEST_DB_URL` must target exactly `poker_online_test`; an early guard rejects any other database before the Spring context and Flyway start. The test suite never runs Flyway clean or drops a database.
 
