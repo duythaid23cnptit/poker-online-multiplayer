@@ -1,161 +1,93 @@
-# Logical Entity-Relationship Model
+# Database Entity-Relationship Model
 
-This is a logical Phase 0 model, not a migration. Physical types, indexes, constraints, retention, and normalization details will be finalized before Flyway scripts are created.
+## Phase 2 implemented schema
+
+The following tables are implemented by Flyway migrations `V1` through `V4`. All IDs and chip values use `BIGINT`; identifiers are database-generated. Tables use InnoDB, `utf8mb4`, and `utf8mb4_0900_ai_ci` for MySQL 8.x.
 
 ```mermaid
 erDiagram
-  USERS ||--|| PLAYER_PROFILES : has
-  USERS ||--o{ REFRESH_TOKENS : authenticates
-  USERS ||--o{ FRIENDSHIPS : requester
-  USERS ||--o{ FRIENDSHIPS : addressee
-  USERS ||--o{ ROOM_PLAYERS : joins
-  USERS ||--o{ CHAT_MESSAGES : sends
+  USERS ||--o| PLAYER_PROFILES : has
+  USERS ||--o{ REFRESH_TOKENS : owns
   USERS ||--o{ ROOMS : owns
-
+  USERS ||--o{ ROOM_PLAYERS : participates
   ROOMS ||--o{ ROOM_PLAYERS : contains
-  ROOMS ||--o{ CHAT_MESSAGES : contains
-  ROOMS ||--o{ GAME_SESSIONS : hosts
-
-  GAME_SESSIONS ||--o{ POKER_HANDS : contains
-  GAME_SESSIONS ||--o{ HAND_PLAYERS : involves
-  POKER_HANDS ||--o{ HAND_PLAYERS : snapshots
-  POKER_HANDS ||--o{ PLAYER_ACTIONS : records
-  POKER_HANDS ||--o{ POTS : settles
-  USERS ||--o{ HAND_PLAYERS : plays
-  USERS ||--o{ PLAYER_ACTIONS : performs
-  POTS ||--o{ POT_WINNERS : awards
-  USERS ||--o{ POT_WINNERS : wins
-
-  USERS ||--|| PLAYER_STATISTICS : aggregates
-  USERS ||--|| PLAYER_RANKINGS : ranks
-  USERS ||--o{ RANKING_HISTORY : tracks
 
   USERS {
-    uuid id PK
-    string username UK
-    string email UK
-    string password_hash
-    string account_status
+    bigint id PK
+    varchar username UK
+    varchar password_hash
+    varchar email UK
+    varchar role
+    varchar account_status
+    bigint account_chips
+    datetime created_at
+    datetime updated_at
+    datetime last_login_at
   }
   PLAYER_PROFILES {
-    uuid user_id PK_FK
-    string display_name
-    string avatar_url
-    bigint account_chip_balance
+    bigint id PK
+    bigint user_id FK,UK
+    varchar display_name
+    varchar avatar_url
+    varchar online_status
+    datetime created_at
+    datetime updated_at
   }
   REFRESH_TOKENS {
-    uuid id PK
-    uuid user_id FK
-    string token_hash UK
+    bigint id PK
+    bigint user_id FK
+    varchar token_hash UK
     datetime expires_at
     datetime revoked_at
-  }
-  FRIENDSHIPS {
-    uuid id PK
-    uuid requester_id FK
-    uuid addressee_id FK
-    string status
+    datetime created_at
   }
   ROOMS {
-    uuid id PK
-    uuid owner_id FK
-    string visibility
-    string password_hash
-    string status
+    bigint id PK
+    varchar name
+    bigint owner_user_id FK
+    varchar room_type
+    varchar password_hash
+    int max_players
+    bigint small_blind
+    bigint big_blind
+    bigint buy_in
+    varchar status
+    datetime created_at
+    datetime updated_at
+    datetime last_activity_at
   }
   ROOM_PLAYERS {
-    uuid room_id PK_FK
-    uuid user_id PK_FK
-    string player_state
+    bigint id PK
+    bigint room_id FK
+    bigint user_id FK
     int seat_number
-    bigint table_chip_balance
-  }
-  CHAT_MESSAGES {
-    uuid id PK
-    uuid room_id FK
-    uuid sender_id FK
-    string body
-    datetime sent_at
-  }
-  GAME_SESSIONS {
-    uuid id PK
-    uuid room_id FK
-    string status
-    bigint state_version
-  }
-  POKER_HANDS {
-    uuid id PK
-    uuid game_session_id FK
-    bigint hand_number
-    string phase_status
-  }
-  HAND_PLAYERS {
-    uuid hand_id PK_FK
-    uuid user_id PK_FK
-    int seat_number
-    bigint starting_chips
-    bigint ending_chips
-  }
-  PLAYER_ACTIONS {
-    uuid id PK
-    uuid hand_id FK
-    uuid user_id FK
-    uuid client_action_id
-    string action_type
-    bigint amount
-    bigint state_version
-  }
-  POTS {
-    uuid id PK
-    uuid hand_id FK
-    int pot_number
-    bigint amount
-  }
-  POT_WINNERS {
-    uuid pot_id PK_FK
-    uuid user_id PK_FK
-    bigint awarded_amount
-  }
-  PLAYER_STATISTICS {
-    uuid user_id PK_FK
-    bigint games_played
-    bigint hands_played
-    bigint net_chips
-  }
-  PLAYER_RANKINGS {
-    uuid user_id PK_FK
-    bigint rating
-    bigint rank_position
-  }
-  RANKING_HISTORY {
-    uuid id PK
-    uuid user_id FK
-    bigint rating
-    bigint rank_position
-    datetime recorded_at
+    varchar player_state
+    bigint table_chips
+    datetime joined_at
+    datetime left_at
   }
 ```
 
-Daily and weekly statistics are aggregate tables keyed by period rather than direct child entities, so they are omitted from the relationship-heavy diagram. Admin users are represented by roles/authorities associated with users; the exact role schema is deferred rather than embedding an `is_admin` flag prematurely. An admin audit-log table is recommended and described in the dictionary. Supporting junction/ledger tables may be introduced later without changing the approved primary logical names.
+## Balance model
 
-## Key logical constraints
+`users.account_chips` is the persistent Account Chip balance. `room_players.table_chips` is the Table Chip balance assigned inside one room. They are deliberately separate non-negative fields. Future buy-in/cash-out application services must transfer between them atomically and authoritatively; the Phase 2 schema does not implement gameplay or transfer logic. Because no initial economic grant is approved, the storage default for Account Chips is technically safe `0`.
 
-- Usernames and normalized emails are unique; sensitive tokens and room passwords are stored only as hashes.
-- A friendship pair is unique regardless of request direction, and a user cannot friend themself.
-- Room status is one of `WAITING`, `PLAYING`, `FINISHED`, or `CLOSED`.
-- One user has at most one active `room_players` row per room and one seat; seat numbers are unique within a room when non-null. Player state is one of `NOT_READY`, `READY`, `PLAYING`, `SPECTATING`, `DISCONNECTED`, or `LEAVING`.
-- Account Chip and Table Chip balances are non-negative integral values. Buy-in/cash-out updates are server-authoritative, atomic, and auditable; total chips are conserved across the transfer.
-- Room capacity is between 6 and 9. Whether capacity counts seats rather than spectators is assumed: it counts player seats only.
-- `(game_session_id, hand_number)` is unique.
-- `(hand_id, user_id, client_action_id)` is unique for idempotency; action sequence/state version also has an ordering constraint.
-- `(hand_id, pot_number)` is unique. Winner awards across a pot must sum to the pot amount, enforced by domain logic and verified transactionally.
-- Statistics/rank projections are reconstructable from authoritative completed game/hand facts.
+## Implemented relationships and constraints
 
-## Modeling questions before migrations
+- `player_profiles.user_id` uniquely references `users.id`, producing zero or one profile per user.
+- `refresh_tokens.user_id` references `users.id`; only token hashes are stored and are unique.
+- `rooms.owner_user_id` references `users.id` with restricted deletion.
+- `room_players.room_id` and `room_players.user_id` reference their owners.
+- `(room_id, user_id)` prevents duplicate membership rows; `(room_id, seat_number)` prevents duplicate occupied seats while allowing multiple `NULL` spectator seats.
+- User role is `PLAYER` or `ADMIN`; account status is `ACTIVE` or `LOCKED`.
+- Presence is `ONLINE`, `IN_GAME`, or `OFFLINE`; persisted presence is only the last known projection, while realtime presence remains server/runtime-managed.
+- Room type is `PUBLIC` or `PRIVATE`; public rooms cannot contain a password hash.
+- Room state is `WAITING`, `PLAYING`, `FINISHED`, or `CLOSED`.
+- Room-player state is `NOT_READY`, `READY`, `PLAYING`, `SPECTATING`, `DISCONNECTED`, or `LEAVING`.
+- Account/Table Chips cannot be negative. Room capacity is 6–9, blinds and buy-in are positive, and the big blind exceeds the small blind.
 
-- Account Chip/Table Chip ledger shape, transfer audit fields, buy-in limits, and rebuy policy. The two-balance model and transfer direction are already approved.
-- Card persistence/encryption/retention for audit and recovery without leaking hidden information.
-- Whether `hand_players` should reference a session-participant entity to preserve display-name snapshots and guest changes.
-- Room ownership transfer and deletion/retention semantics.
-- Roles/authorities and admin audit schema.
-- Event outbox/checkpoint tables needed for crash recovery and reliable publication.
+## Planned, not implemented in Phase 2
+
+The frozen logical model still plans `friendships`, `chat_messages`, `game_sessions`, `poker_hands`, `hand_players`, `player_actions`, `pots`, `player_statistics`, `player_rankings`, `ranking_history`, `daily_statistics`, and `weekly_statistics`. They have no Phase 2 migrations or JPA mappings.
+
+A Game Session will represent continuous play in one room and contain many individual Poker Hands. That distinction remains authoritative even though neither table is implemented yet.

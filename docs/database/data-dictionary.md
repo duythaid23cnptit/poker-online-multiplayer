@@ -1,118 +1,111 @@
-# Planned Data Dictionary
+# Database Data Dictionary
 
-This high-level dictionary names logical fields only. Flyway migrations, physical MySQL types, indexes, column lengths, and deletion policies will be designed in a later phase. Unless noted, mutable tables include `created_at` and `updated_at` UTC timestamps and use an opaque UUID-compatible identifier strategy.
+## Conventions
 
-## Identity and player
+Phase 2 tables use MySQL 8.x, InnoDB, `utf8mb4`, and `utf8mb4_0900_ai_ci`. Primary keys and chip values are `BIGINT`; chips never use floating point. JPA uses Java `Instant`, Hibernate is configured with JDBC timezone `UTC`, connections set the MySQL session timezone to `+00:00`, and SQL stores instants in `DATETIME(6)`. All enum values are readable strings, never ordinals.
 
-### `users` — owner: auth/player boundary to finalize
+Flyway is schema authority and Hibernate uses `ddl-auto=validate`. Constraint and index names are explicit. No trigger or database gameplay logic exists.
 
-Account identity and state. Key fields: `id`, normalized unique `username`, normalized unique `email`, `password_hash`, `account_status` (`ACTIVE`, `LOCKED`, `DISABLED`), `locked_until`, `lock_reason`, and audit timestamps. Never stores plaintext credentials. Ownership must be resolved because auth owns credentials while player owns account/profile status; a single writer or explicit split into credential/account tables is required.
+## Implemented tables
+
+### `users` — owner: auth
+
+Authentication identity plus account-level state. The player module may participate later through an explicit application contract for Account Chip transfers; it does not directly own this table.
+
+| Column | Type | Null/default | Meaning |
+|---|---|---|---|
+| `id` | `BIGINT` | PK, auto-increment | User identifier |
+| `username` | `VARCHAR(50)` | required, unique | Login name |
+| `password_hash` | `VARCHAR(255)` | required | Password hash; never plaintext |
+| `email` | `VARCHAR(255)` | nullable, unique when present | Optional normalized email |
+| `role` | `VARCHAR(20)` | `PLAYER` | `PLAYER` or `ADMIN` |
+| `account_status` | `VARCHAR(20)` | `ACTIVE` | `ACTIVE` or `LOCKED` |
+| `account_chips` | `BIGINT` | `0` | Persistent Account Chips; check `>= 0` |
+| `created_at` | `DATETIME(6)` | current UTC time | Creation instant |
+| `updated_at` | `DATETIME(6)` | current UTC time, updated automatically | Last update instant |
+| `last_login_at` | `DATETIME(6)` | nullable | Last successful login instant |
+
+Constraints/indexes: `pk_users`, `uk_users_username`, `uk_users_email`, and checks for role, status, and non-negative Account Chips. The `0` default prevents an implicit chip grant; a later approved application policy must establish any starting allocation.
 
 ### `player_profiles` — owner: player
 
-One-to-one player profile and persistent balance. Key fields: `user_id` (PK/FK), `display_name`, optional `avatar_url`, non-negative integral `account_chip_balance`, and profile timestamps. Only server use cases modify Account Chips. Historical records should snapshot display names rather than depend on current profile values where audit meaning matters.
+Player-facing profile information, separate from authentication identity and future statistics.
+
+| Column | Type | Null/default | Meaning |
+|---|---|---|---|
+| `id` | `BIGINT` | PK, auto-increment | Profile identifier |
+| `user_id` | `BIGINT` | required, unique, FK | Owning user |
+| `display_name` | `VARCHAR(100)` | required | Public display name |
+| `avatar_url` | `VARCHAR(2048)` | nullable | Avatar reference |
+| `online_status` | `VARCHAR(20)` | `OFFLINE` | Last known `ONLINE`, `IN_GAME`, or `OFFLINE` projection |
+| `created_at` | `DATETIME(6)` | current UTC time | Creation instant |
+| `updated_at` | `DATETIME(6)` | current UTC time, updated automatically | Last update instant |
+
+Constraints/indexes: `pk_player_profiles`, `uk_player_profiles_user_id`, `fk_player_profiles_user`, presence check, and `idx_player_profiles_online_status`. Realtime presence is runtime/server-managed; the stored value is not an authoritative live connection registry.
 
 ### `refresh_tokens` — owner: auth
 
-Refresh sessions. Key fields: `id`, `user_id`, unique `token_hash`, `issued_at`, `expires_at`, `revoked_at`, `replaced_by_token_id`, device/session metadata, and optional reuse-detection fields. Store hashes only and index active lookup fields.
+Persistence preparation for the frozen refresh/rotation/logout architecture. Phase 2 implements no JWT issuance or validation.
 
-### `user_roles` / `roles` — owner: auth (proposed)
+| Column | Type | Null/default | Meaning |
+|---|---|---|---|
+| `id` | `BIGINT` | PK, auto-increment | Token record identifier |
+| `user_id` | `BIGINT` | required, FK | Owning user |
+| `token_hash` | `VARCHAR(255)` | required, unique | Secure representation; never plaintext token |
+| `expires_at` | `DATETIME(6)` | required | Expiry instant |
+| `revoked_at` | `DATETIME(6)` | nullable | Revocation instant |
+| `created_at` | `DATETIME(6)` | current UTC time | Creation instant |
 
-Role assignments used for administration. Key fields: role name and `(user_id, role_id)` assignment. Exact tables depend on whether roles are fixed enums. Authorization remains server-side.
-
-## Social
-
-### `friendships` — owner: social
-
-Friend-request and relationship lifecycle. Key fields: `id`, `requester_id`, `addressee_id`, `status` (`PENDING`, `ACCEPTED`, `REJECTED`, `CANCELLED`, `REMOVED` as finalized), `requested_at`, `responded_at`, and `version`. Enforce no self-pair and one active logical relationship per unordered pair.
-
-### `chat_messages` — owner: social
-
-Durable room chat. Key fields: `id`, `room_id`, `sender_id`, `body`, `sent_at`, optional moderation/deletion status, and client message ID for retry deduplication. It must not contain tokens, room passwords, hole cards generated by the server, or HTML trusted by the client. Retention policy is unresolved.
-
-## Rooms
+Constraints/indexes: `pk_refresh_tokens`, `uk_refresh_tokens_token_hash`, `fk_refresh_tokens_user`, `idx_refresh_tokens_user_id`, and `idx_refresh_tokens_expires_at`.
 
 ### `rooms` — owner: room
 
-Room configuration/lifecycle. Key fields: `id`, `owner_id`, `name`, `visibility` (`PUBLIC`, `PRIVATE`), nullable `password_hash`, `capacity` (6–9 player seats), `status` (`WAITING`, `PLAYING`, `FINISHED`, `CLOSED`), `small_blind`, `big_blind`, buy-in configuration, optimistic `version`, and timestamps. Expose only `password_protected`, never the hash.
+Durable room configuration and lifecycle metadata. It does not implement room behavior.
+
+| Column | Type | Null/default | Meaning |
+|---|---|---|---|
+| `id` | `BIGINT` | PK, auto-increment | Room identifier |
+| `name` | `VARCHAR(100)` | required | Room name |
+| `owner_user_id` | `BIGINT` | required, FK | Current owner |
+| `room_type` | `VARCHAR(20)` | required | `PUBLIC` or `PRIVATE` |
+| `password_hash` | `VARCHAR(255)` | nullable | Private-room password hash; never plaintext; must be null for public rooms |
+| `max_players` | `INT` | required | Player capacity, check 6–9 |
+| `small_blind` | `BIGINT` | required | Positive configured small blind |
+| `big_blind` | `BIGINT` | required | Greater than small blind |
+| `buy_in` | `BIGINT` | required | Positive configured buy-in |
+| `status` | `VARCHAR(20)` | `WAITING` | `WAITING`, `PLAYING`, `FINISHED`, or `CLOSED` |
+| `created_at` | `DATETIME(6)` | current UTC time | Creation instant |
+| `updated_at` | `DATETIME(6)` | current UTC time, updated automatically | Last update instant |
+| `last_activity_at` | `DATETIME(6)` | required | Latest relevant room activity instant |
+
+Constraints/indexes: `pk_rooms`, `fk_rooms_owner_user`, checks for type/public password, capacity, blinds, buy-in and status, plus `idx_rooms_owner_user_id`, `idx_rooms_status_type`, and `idx_rooms_last_activity_at`.
 
 ### `room_players` — owner: room
 
-Current/historical room participation. Key fields: `room_id`, `user_id`, `player_state` (`NOT_READY`, `READY`, `PLAYING`, `SPECTATING`, `DISCONNECTED`, `LEAVING`), nullable `seat_number`, non-negative `table_chip_balance`, `disconnect_deadline`, `joined_at`, `left_at`, and version. Active seats must be unique per room. Spectators have no seat or Table Chips. A server-authoritative buy-in atomically debits Account Chips and credits Table Chips; legal cash-out performs the reverse.
+Persistent membership, seat state, and Table Chips. This exact approved table name is retained.
 
-## Games and hands
+| Column | Type | Null/default | Meaning |
+|---|---|---|---|
+| `id` | `BIGINT` | PK, auto-increment | Membership identifier |
+| `room_id` | `BIGINT` | required, FK | Room |
+| `user_id` | `BIGINT` | required, FK | User |
+| `seat_number` | `INT` | nullable | Seat 1–9; null supports spectators |
+| `player_state` | `VARCHAR(20)` | required | Approved room-player state |
+| `table_chips` | `BIGINT` | `0` | Table Chips, check `>= 0` |
+| `joined_at` | `DATETIME(6)` | current UTC time | Join instant |
+| `left_at` | `DATETIME(6)` | nullable | Legal removal instant |
 
-### `game_sessions` — owner: game
+Constraints/indexes: `pk_room_players`, `uk_room_players_room_user`, `uk_room_players_room_seat`, both foreign keys, checks for seat/state/Table Chips, `idx_room_players_user_id`, and `idx_room_players_room_state`. Multiple spectators are allowed because MySQL unique indexes permit multiple null seat numbers. A future leave/rejoin policy must decide whether to reuse or archive the unique membership row.
 
-One continuous playing session associated with a room. It contains multiple Poker Hands. Key fields: `id`, `room_id` (external module identifier), `status`, configuration snapshot (capacity/blinds/buy-in/rule version), `started_at`, `ended_at`, current durable `state_version`, and termination reason. A room may host multiple sessions over time but at most one active session.
+## Account Chips versus Table Chips
 
-### `game_session_players` — owner: game (recommended addition)
+- `users.account_chips` persists the account-owned balance.
+- `room_players.table_chips` persists the room-assigned balance.
+- Future buy-in transfers Account Chips to Table Chips; legal cash-out transfers remaining Table Chips back.
+- Only server application services may perform these transfers, atomically and with later audit support. Phase 2 supplies storage constraints only.
 
-Session participation and starting/final stack facts. Key fields: `game_session_id`, `user_id`, seat/display-name snapshots, `starting_chips`, `ending_chips`, join/leave status and timestamps. This distinguishes session participation from mutable room membership.
+## Planned tables
 
-### `poker_hands` — owner: game
+The following remain planned and are not present in the Phase 2 schema: `friendships`, `chat_messages`, `game_sessions`, `poker_hands`, `hand_players`, `player_actions`, `pots`, `player_statistics`, `player_rankings`, `ranking_history`, `daily_statistics`, and `weekly_statistics`.
 
-One individual Texas Hold'em hand within a Game Session, from blind posting through completion. Key fields: `id`, `game_session_id`, sequential `hand_number`, dealer/small-blind/big-blind seats, `status`, `started_at`, `ended_at`, final board representation, total pot, engine/rule version, and final state version. Hidden card storage is deferred pending recovery/security requirements.
-
-### `hand_players` — owner: game
-
-Per-hand immutable participation/result snapshot. Key fields: `hand_id`, `user_id`, `seat_number`, `starting_chips`, `ending_chips`, total contribution, folded/all-in/showdown flags, hand rank/result summary, and net chips. Hole cards, if persisted, require restricted access and a deliberate encryption/retention design.
-
-### `player_actions` — owner: game
-
-Ordered action audit. Key fields: `id`, `hand_id`, `user_id`, `client_action_id`, `turn_id`, sequence number, `action_type`, requested amount, accepted authoritative amount, resulting `state_version`, `occurred_at`, and optionally sanitized rejection metadata if rejected commands are retained separately. Enforce command uniqueness per actor/game context.
-
-### `pots` — owner: game
-
-Final main/side pots. Key fields: `id`, `hand_id`, `pot_number` (0 for main, then sides), `amount`, and eligibility snapshot/reference. Eligibility may need a child table rather than serialized data.
-
-### `pot_eligible_players` — owner: game (proposed supporting table)
-
-Many-to-many eligibility for a finalized pot: `pot_id`, `user_id`.
-
-### `pot_winners` — owner: game (proposed supporting table)
-
-Pot awards supporting ties/splits: `pot_id`, `user_id`, `awarded_amount`, optional hand-rank summary. Award totals must reconcile exactly with the pot, including an explicit odd-chip policy.
-
-### `game_state_checkpoints` / `outbox_events` — owner: game/common infrastructure (decision pending)
-
-Potential recovery/reliable-publication records. Checkpoint fields would include game ID, version, protected serialized state, rule version, and timestamp. Outbox fields would include event ID/type, aggregate ID/version, payload, occurred/published timestamps, and attempts. These tables are not approved until the recovery strategy is selected.
-
-## Statistics and ranking
-
-### `player_statistics` — owner: ranking
-
-One aggregate row per user. Key fields: `user_id`, `games_played`, `hands_played`, `wins`, `losses`, `chips_won`, `chips_lost`, `net_chips`, `largest_pot`, total/average playing duration, source version/event marker, and `updated_at`. Define wins/losses precisely for sessions versus hands before implementation.
-
-### `player_rankings` — owner: ranking
-
-Current ranking. Key fields: `user_id`, `rating`, `tier` if used, `rank_position` (or calculate it), ranking algorithm version, games-qualified count, and `updated_at`. Position may be computed to avoid write amplification.
-
-### `ranking_history` — owner: ranking
-
-Historical rating snapshots/changes. Key fields: `id`, `user_id`, source game/session ID or event ID, previous/new rating, rank/tier snapshot, algorithm version, and `recorded_at`. Source event uniqueness makes updates idempotent.
-
-### `daily_statistics` — owner: analytics
-
-Daily aggregate by UTC/local reporting date (timezone must be fixed). Key fields: `stat_date`, registered/active/peak-online users, rooms created/active, games started/completed, spectators, average players per room, average game duration, and source watermark.
-
-### `weekly_statistics` — owner: analytics
-
-Weekly aggregate keyed by canonical week start. Mirrors relevant daily measures plus source watermark. Decide whether to persist or calculate from daily rows.
-
-## Administration and audit
-
-### `admin_audit_log` — owner: admin (recommended)
-
-Append-only record for sensitive operations. Key fields: `id`, `admin_user_id`, `action_type`, target type/ID, reason, sanitized before/after summary, correlation ID, and `occurred_at`. It must never contain passwords, token values, or private card data.
-
-## Cross-cutting physical design rules
-
-- Use Flyway as schema truth and `ddl-auto=validate` in application profiles.
-- Store chips and monetary-like counters as integral types; no floating point.
-- Account Chip/Table Chip transfers must be atomic, auditable, server-authoritative, and preserve non-negative balances. Chips committed before a mid-hand leave remain in `pots`; the `LEAVING` player's remaining Table Chips return only after hand completion.
-- Add foreign keys where lifecycle/ownership permits, plus indexes for foreign keys, status/time queries, and pagination.
-- Use optimistic version columns for ordinary database aggregates; active-game mutation additionally uses per-game serialization.
-- Prefer explicit status/history over destructive deletion for auditable game records. Define privacy retention/anonymization separately.
-- Normalize emails/usernames consistently before unique constraints; use MySQL collation deliberately.
-- Never place secrets or private card data in general analytics, logs, or event payloads.
+Future persistence must retain the distinction that one Game Session contains many Poker Hands. No placeholders, migrations, entities, or repositories for these future tables are created in Phase 2.
