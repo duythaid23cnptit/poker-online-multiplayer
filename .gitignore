@@ -1,0 +1,36 @@
+# Java and Maven
+**/target/
+*.class
+
+# Node and Vite
+**/node_modules/
+**/dist/
+**/.vite/
+**/coverage/
+**/.cache/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+**/application-secrets.yml
+
+# Logs and runtime files
+*.log
+logs/
+*.pid
+
+# IDE metadata
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp
+*.swp
