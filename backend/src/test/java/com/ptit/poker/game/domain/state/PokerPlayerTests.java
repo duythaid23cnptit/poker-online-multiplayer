@@ -80,17 +80,23 @@ class PokerPlayerTests {
     }
 
     @Test
-    void intentMethodsPreserveFoldedAllInDisconnectedAndLeavingStates() {
-        PokerPlayer player = player(10, 1, 100, 0, 0, PokerPlayerState.ACTIVE, List.of());
+    void participationConnectivityAndLeavingAreIndependentDomainFacts() {
+        PokerPlayer folded = player(10, 1, 100, 0, 20, PokerPlayerState.ACTIVE, List.of());
+        folded.markFolded();
+        folded.markDisconnected();
+        assertThat(folded.playerState()).isEqualTo(PokerPlayerState.FOLDED);
+        assertThat(folded.isDisconnected()).isTrue();
 
-        player.markFolded();
-        assertThat(player.playerState()).isEqualTo(PokerPlayerState.FOLDED);
-        player.markAllIn();
-        assertThat(player.playerState()).isEqualTo(PokerPlayerState.ALL_IN);
-        player.markDisconnected();
-        assertThat(player.playerState()).isEqualTo(PokerPlayerState.DISCONNECTED);
-        player.markLeaving();
-        assertThat(player.playerState()).isEqualTo(PokerPlayerState.LEAVING);
+        PokerPlayer allIn = player(20, 2, 0, 100, 100, PokerPlayerState.ALL_IN, List.of());
+        allIn.markDisconnected();
+        assertThat(allIn.playerState()).isEqualTo(PokerPlayerState.ALL_IN);
+        assertThat(allIn.isDisconnected()).isTrue();
+
+        PokerPlayer leaving = player(30, 3, 80, 20, 20, PokerPlayerState.ACTIVE, List.of());
+        leaving.markLeaving();
+        assertThat(leaving.playerState()).isEqualTo(PokerPlayerState.FOLDED);
+        assertThat(leaving.isLeaving()).isTrue();
+        assertThat(leaving.totalCommitted()).isEqualTo(20);
     }
 
     @Test
@@ -101,9 +107,7 @@ class PokerPlayerTests {
         assertThat(PokerPlayerState.values()).containsExactly(
                 PokerPlayerState.ACTIVE,
                 PokerPlayerState.FOLDED,
-                PokerPlayerState.ALL_IN,
-                PokerPlayerState.DISCONNECTED,
-                PokerPlayerState.LEAVING);
+                PokerPlayerState.ALL_IN);
     }
 
     private static PokerPlayer player(

@@ -22,7 +22,7 @@ public final class BettingEngine {
         } catch (IllegalArgumentException exception) {
             return LegalActions.none();
         }
-        if (player.playerState() != PokerPlayerState.ACTIVE) {
+        if (!player.canAcceptClientBettingAction()) {
             return LegalActions.none();
         }
 

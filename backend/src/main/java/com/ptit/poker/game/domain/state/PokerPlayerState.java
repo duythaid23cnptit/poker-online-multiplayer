@@ -4,7 +4,5 @@ package com.ptit.poker.game.domain.state;
 public enum PokerPlayerState {
     ACTIVE,
     FOLDED,
-    ALL_IN,
-    DISCONNECTED,
-    LEAVING
+    ALL_IN
 }

@@ -17,18 +17,19 @@ public final class GameState {
 
     private final UUID gameId;
     private final UUID handId;
-    private final GamePhase phase;
+    private GamePhase phase;
     private final int dealerPosition;
     private final int smallBlindPosition;
     private final int bigBlindPosition;
-    private final Long currentTurnUserId;
+    private Long currentTurnUserId;
     private long currentBet;
     private long minimumRaise;
     private final long mainPot;
-    private final List<Card> communityCards;
+    private List<Card> communityCards;
     private final List<PokerPlayer> players;
     private final Duration remainingTime;
-    private final UUID turnId;
+    private UUID turnId;
+    private final long minimumBetBaseline;
     private long stateVersion;
 
     public GameState(
@@ -47,6 +48,42 @@ public final class GameState {
             Duration remainingTime,
             long stateVersion,
             UUID turnId) {
+        this(
+                gameId,
+                handId,
+                phase,
+                dealerPosition,
+                smallBlindPosition,
+                bigBlindPosition,
+                currentTurnUserId,
+                currentBet,
+                minimumRaise,
+                mainPot,
+                communityCards,
+                players,
+                remainingTime,
+                stateVersion,
+                turnId,
+                minimumRaise);
+    }
+
+    public GameState(
+            UUID gameId,
+            UUID handId,
+            GamePhase phase,
+            int dealerPosition,
+            int smallBlindPosition,
+            int bigBlindPosition,
+            Long currentTurnUserId,
+            long currentBet,
+            long minimumRaise,
+            long mainPot,
+            List<Card> communityCards,
+            List<PokerPlayer> players,
+            Duration remainingTime,
+            long stateVersion,
+            UUID turnId,
+            long minimumBetBaseline) {
         this.gameId = Objects.requireNonNull(gameId, "gameId must not be null");
         this.handId = Objects.requireNonNull(handId, "handId must not be null");
         if (gameId.equals(handId)) {
@@ -61,6 +98,9 @@ public final class GameState {
         this.bigBlindPosition = bigBlindPosition;
         requireNonNegative(currentBet, "currentBet");
         requireNonNegative(minimumRaise, "minimumRaise");
+        if (minimumBetBaseline < 0) {
+            throw new IllegalArgumentException("minimumBetBaseline must not be negative");
+        }
         requireNonNegative(mainPot, "mainPot");
         if (stateVersion < 0) {
             throw new IllegalArgumentException("stateVersion must not be negative");
@@ -85,6 +125,7 @@ public final class GameState {
         this.remainingTime = validateRemainingTime(remainingTime);
         this.stateVersion = stateVersion;
         this.turnId = turnId;
+        this.minimumBetBaseline = minimumBetBaseline;
     }
 
     public UUID gameId() {
@@ -147,6 +188,10 @@ public final class GameState {
         return turnId;
     }
 
+    public long minimumBetBaseline() {
+        return minimumBetBaseline;
+    }
+
     public PokerPlayer requirePlayer(long userId) {
         return players.stream()
                 .filter(player -> player.userId() == userId)
@@ -182,6 +227,62 @@ public final class GameState {
             throw new IllegalArgumentException("short all-in must increase currentBet");
         }
         currentBet = newCurrentBet;
+    }
+
+    /** Assigns an authoritative actor and turn token, or clears both when no actor exists. */
+    public void assignTurn(Long userId, UUID newTurnId) {
+        if ((userId == null) != (newTurnId == null)) {
+            throw new IllegalArgumentException("userId and turnId must both be present or absent");
+        }
+        if (userId != null) {
+            requirePlayer(userId);
+        }
+        currentTurnUserId = userId;
+        turnId = newTurnId;
+    }
+
+    /**
+     * Advances exactly one street, installs server-dealt board cards, and resets street-local wagers.
+     */
+    public void advanceStreet(GamePhase nextPhase, List<Card> newlyDealtCards) {
+        Objects.requireNonNull(nextPhase, "nextPhase must not be null");
+        Objects.requireNonNull(newlyDealtCards, "newlyDealtCards must not be null");
+        GamePhase expected = switch (phase) {
+            case PRE_FLOP -> GamePhase.FLOP;
+            case FLOP -> GamePhase.TURN;
+            case TURN -> GamePhase.RIVER;
+            case RIVER -> GamePhase.SHOWDOWN;
+            case SHOWDOWN, FINISHED -> throw new IllegalStateException("current phase cannot advance");
+        };
+        if (nextPhase != expected) {
+            throw new IllegalArgumentException("invalid street transition from " + phase + " to " + nextPhase);
+        }
+        int requiredNewCards = switch (nextPhase) {
+            case FLOP -> 3;
+            case TURN, RIVER -> 1;
+            case SHOWDOWN -> 0;
+            default -> throw new IllegalArgumentException("nextPhase is not a street transition target");
+        };
+        if (newlyDealtCards.size() != requiredNewCards) {
+            throw new IllegalArgumentException(nextPhase + " requires " + requiredNewCards + " newly dealt cards");
+        }
+
+        List<Card> updatedBoard = new java.util.ArrayList<>(communityCards);
+        updatedBoard.addAll(newlyDealtCards);
+        communityCards = validateCards(updatedBoard, nextPhase, players);
+        phase = nextPhase;
+        currentBet = 0;
+        minimumRaise = minimumBetBaseline;
+        players.stream()
+                .filter(player -> player.playerState() != PokerPlayerState.FOLDED)
+                .forEach(PokerPlayer::resetCurrentBetForNewStreet);
+        assignTurn(null, null);
+    }
+
+    /** Marks an uncontested hand terminal without performing any pot award. */
+    public void finishByFolds() {
+        phase = GamePhase.FINISHED;
+        assignTurn(null, null);
     }
 
     /** Advances the authoritative state version exactly once. */

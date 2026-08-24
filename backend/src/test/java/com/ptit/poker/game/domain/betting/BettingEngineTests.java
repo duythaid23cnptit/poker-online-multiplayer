@@ -281,15 +281,16 @@ class BettingEngineTests {
 
     @Test
     void foldedAllInLeavingAndDisconnectedPlayersHaveNoClientActions() {
-        for (PokerPlayerState state : List.of(
-                PokerPlayerState.FOLDED,
-                PokerPlayerState.ALL_IN,
-                PokerPlayerState.LEAVING,
-                PokerPlayerState.DISCONNECTED)) {
-            PokerPlayer player = player(ACTOR_ID, 1, state == PokerPlayerState.ALL_IN ? 0 : 100,
-                    20, 20, state);
+        PokerPlayer folded = player(ACTOR_ID, 1, 100, 20, 20, PokerPlayerState.FOLDED);
+        PokerPlayer allIn = player(ACTOR_ID, 1, 0, 20, 20, PokerPlayerState.ALL_IN);
+        PokerPlayer leaving = player(ACTOR_ID, 1, 100, 20, 20, PokerPlayerState.ACTIVE);
+        leaving.markLeaving();
+        PokerPlayer disconnected = player(ACTOR_ID, 1, 100, 20, 20, PokerPlayerState.ACTIVE);
+        disconnected.markDisconnected();
+
+        for (PokerPlayer player : List.of(folded, allIn, leaving, disconnected)) {
             assertThat(engine.legalActions(game(player, 20, 20, TURN_ID, ACTOR_ID), ACTOR_ID).actions())
-                    .as("state %s", state)
+                    .as("player %s", player.userId())
                     .isEmpty();
         }
     }

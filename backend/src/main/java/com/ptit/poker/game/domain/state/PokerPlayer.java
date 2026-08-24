@@ -19,6 +19,8 @@ public final class PokerPlayer {
     private long totalCommitted;
     private final List<Card> holeCards;
     private PokerPlayerState playerState;
+    private boolean connected;
+    private boolean leaving;
 
     public PokerPlayer(
             long userId,
@@ -28,6 +30,28 @@ public final class PokerPlayer {
             long totalCommitted,
             PokerPlayerState playerState,
             List<Card> holeCards) {
+        this(
+                userId,
+                seatNumber,
+                tableChips,
+                currentBet,
+                totalCommitted,
+                playerState,
+                holeCards,
+                true,
+                false);
+    }
+
+    public PokerPlayer(
+            long userId,
+            int seatNumber,
+            long tableChips,
+            long currentBet,
+            long totalCommitted,
+            PokerPlayerState playerState,
+            List<Card> holeCards,
+            boolean connected,
+            boolean leaving) {
         if (userId <= 0) {
             throw new IllegalArgumentException("userId must be positive");
         }
@@ -45,6 +69,11 @@ public final class PokerPlayer {
         this.totalCommitted = totalCommitted;
         this.playerState = Objects.requireNonNull(playerState, "playerState must not be null");
         this.holeCards = validateHoleCards(holeCards);
+        this.connected = connected;
+        this.leaving = leaving;
+        if (leaving && playerState != PokerPlayerState.FOLDED) {
+            throw new IllegalArgumentException("a leaving player must be FOLDED for hand participation");
+        }
     }
 
     public long userId() {
@@ -75,25 +104,60 @@ public final class PokerPlayer {
         return holeCards;
     }
 
+    public boolean isConnected() {
+        return connected;
+    }
+
+    public boolean isDisconnected() {
+        return !connected;
+    }
+
+    public boolean isLeaving() {
+        return leaving;
+    }
+
+    /** Whether this player remains eligible for a future pot award. */
+    public boolean isEligibleToWin() {
+        return playerState != PokerPlayerState.FOLDED && !leaving;
+    }
+
+    /** Includes disconnected active players so their official turn is preserved for timeout handling. */
+    public boolean canReceiveBettingTurn() {
+        return playerState == PokerPlayerState.ACTIVE && !leaving;
+    }
+
+    /** Normal client actions additionally require an active connection. */
+    public boolean canAcceptClientBettingAction() {
+        return canReceiveBettingTurn() && connected;
+    }
+
     public void markFolded() {
         playerState = PokerPlayerState.FOLDED;
     }
 
     public void markAllIn() {
+        if (playerState != PokerPlayerState.ACTIVE) {
+            throw new IllegalStateException("only an ACTIVE player can become ALL_IN");
+        }
         playerState = PokerPlayerState.ALL_IN;
     }
 
     public void markDisconnected() {
-        playerState = PokerPlayerState.DISCONNECTED;
+        connected = false;
+    }
+
+    public void markConnected() {
+        connected = true;
     }
 
     public void markLeaving() {
-        playerState = PokerPlayerState.LEAVING;
+        leaving = true;
+        playerState = PokerPlayerState.FOLDED;
     }
 
     /** Commits chips immediately while preserving all player accounting invariants. */
     public void commitChips(long amount) {
-        if (playerState != PokerPlayerState.ACTIVE) {
+        if (playerState != PokerPlayerState.ACTIVE || leaving) {
             throw new IllegalStateException("only an ACTIVE player can commit chips");
         }
         requireNonNegative(amount, "amount");
@@ -109,6 +173,11 @@ public final class PokerPlayer {
         if (tableChips == 0) {
             playerState = PokerPlayerState.ALL_IN;
         }
+    }
+
+    /** Clears only the street-local wager while preserving hand commitment. */
+    public void resetCurrentBetForNewStreet() {
+        currentBet = 0;
     }
 
     private static List<Card> validateHoleCards(List<Card> holeCards) {
