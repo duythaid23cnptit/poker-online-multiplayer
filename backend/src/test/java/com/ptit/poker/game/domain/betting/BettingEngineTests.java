@@ -83,7 +83,7 @@ class BettingEngineTests {
         assertThat(player.currentBet()).isEqualTo(30);
         assertThat(player.totalCommitted()).isEqualTo(50);
         assertThat(game.currentBet()).isEqualTo(30);
-        assertThat(game.mainPot()).isZero();
+        assertThat(game.potConstruction().mainPot()).isEmpty();
     }
 
     @Test
@@ -373,7 +373,9 @@ class BettingEngineTests {
         assertThat(player.tableChips()).isEqualTo(850);
         assertThat(player.currentBet()).isEqualTo(150);
         assertThat(player.totalCommitted()).isEqualTo(150);
-        assertThat(laterCallState.mainPot()).isZero();
+        assertThat(laterCallState.potConstruction().mainPot()).isEmpty();
+        assertThat(laterCallState.potConstruction().uncalledBetReturns())
+                .containsExactly(new com.ptit.poker.game.domain.pot.UncalledBetReturn(10, 150));
     }
 
     @Test
@@ -412,7 +414,6 @@ class BettingEngineTests {
                 currentTurnUserId,
                 currentBet,
                 minimumRaise,
-                0,
                 List.of(),
                 List.of(actor, second, third),
                 Duration.ofSeconds(30),

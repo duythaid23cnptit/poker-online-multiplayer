@@ -248,7 +248,7 @@ class PokerRoundEngineTests {
         assertThat(game.phase()).isEqualTo(GamePhase.FINISHED);
         assertThat(game.currentTurnUserId()).isNull();
         assertThat(game.turnId()).isNull();
-        assertThat(game.mainPot()).isZero();
+        assertThat(game.potConstruction().mainPot()).isEmpty();
         assertThat(game.communityCards()).isEmpty();
     }
 
@@ -340,7 +340,7 @@ class PokerRoundEngineTests {
         assertThat(game.players()).extracting(PokerPlayer::totalCommitted)
                 .containsExactly(100L, 200L, 200L, 200L);
         assertThat(game.players()).allSatisfy(player -> assertThat(player.currentBet()).isZero());
-        assertThat(game.mainPot()).isZero();
+        assertThat(game.potConstruction().mainPot()).isPresent();
     }
 
     private void checkAround(GameState game, BettingRoundState round, Deck deck) {
@@ -376,7 +376,6 @@ class PokerRoundEngineTests {
                 null,
                 currentBet,
                 minimumRaise,
-                0,
                 board,
                 players,
                 Duration.ofSeconds(30),

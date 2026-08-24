@@ -1,6 +1,8 @@
 package com.ptit.poker.game.domain.state;
 
 import com.ptit.poker.game.domain.card.Card;
+import com.ptit.poker.game.domain.pot.PotBuilder;
+import com.ptit.poker.game.domain.pot.PotConstructionResult;
 
 import java.time.Duration;
 import java.util.Comparator;
@@ -24,7 +26,6 @@ public final class GameState {
     private Long currentTurnUserId;
     private long currentBet;
     private long minimumRaise;
-    private final long mainPot;
     private List<Card> communityCards;
     private final List<PokerPlayer> players;
     private final Duration remainingTime;
@@ -42,7 +43,6 @@ public final class GameState {
             Long currentTurnUserId,
             long currentBet,
             long minimumRaise,
-            long mainPot,
             List<Card> communityCards,
             List<PokerPlayer> players,
             Duration remainingTime,
@@ -58,7 +58,6 @@ public final class GameState {
                 currentTurnUserId,
                 currentBet,
                 minimumRaise,
-                mainPot,
                 communityCards,
                 players,
                 remainingTime,
@@ -77,7 +76,6 @@ public final class GameState {
             Long currentTurnUserId,
             long currentBet,
             long minimumRaise,
-            long mainPot,
             List<Card> communityCards,
             List<PokerPlayer> players,
             Duration remainingTime,
@@ -101,7 +99,6 @@ public final class GameState {
         if (minimumBetBaseline < 0) {
             throw new IllegalArgumentException("minimumBetBaseline must not be negative");
         }
-        requireNonNegative(mainPot, "mainPot");
         if (stateVersion < 0) {
             throw new IllegalArgumentException("stateVersion must not be negative");
         }
@@ -121,7 +118,6 @@ public final class GameState {
 
         this.currentBet = currentBet;
         this.minimumRaise = minimumRaise;
-        this.mainPot = mainPot;
         this.remainingTime = validateRemainingTime(remainingTime);
         this.stateVersion = stateVersion;
         this.turnId = turnId;
@@ -164,8 +160,9 @@ public final class GameState {
         return minimumRaise;
     }
 
-    public long mainPot() {
-        return mainPot;
+    /** Derives the single authoritative pot model from current hand commitments. */
+    public PotConstructionResult potConstruction() {
+        return PotBuilder.calculate(players);
     }
 
     public List<Card> communityCards() {

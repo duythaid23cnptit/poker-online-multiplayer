@@ -32,7 +32,7 @@ class GameStateTests {
         assertThat(state.currentTurnUserId()).isEqualTo(10);
         assertThat(state.currentBet()).isEqualTo(20);
         assertThat(state.minimumRaise()).isEqualTo(20);
-        assertThat(state.mainPot()).isEqualTo(60);
+        assertThat(state.potConstruction().mainPot()).isEmpty();
         assertThat(state.remainingTime()).isEqualTo(Duration.ofSeconds(30));
         assertThat(state.stateVersion()).isEqualTo(4);
         assertThat(state.turnId()).isEqualTo(TURN_ID);
@@ -55,7 +55,7 @@ class GameStateTests {
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("phase");
         assertThatThrownBy(() -> new GameState(
                 GAME_ID, GAME_ID, GamePhase.PRE_FLOP, 1, 2, 3, 10L,
-                0, 0, 0, List.of(), players(), Duration.ZERO, 0, TURN_ID))
+                0, 0, List.of(), players(), Duration.ZERO, 0, TURN_ID))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("distinct");
     }
 
@@ -84,11 +84,11 @@ class GameStateTests {
     void rejectsUnoccupiedOrInvalidAuthoritativePositions() {
         assertThatThrownBy(() -> new GameState(
                 GAME_ID, HAND_ID, GamePhase.PRE_FLOP, 0, 2, 3, 10L,
-                0, 0, 0, List.of(), players(), Duration.ZERO, 0, TURN_ID))
+                0, 0, List.of(), players(), Duration.ZERO, 0, TURN_ID))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("dealerPosition");
         assertThatThrownBy(() -> new GameState(
                 GAME_ID, HAND_ID, GamePhase.PRE_FLOP, 1, 2, 4, 10L,
-                0, 0, 0, List.of(), players(), Duration.ZERO, 0, TURN_ID))
+                0, 0, List.of(), players(), Duration.ZERO, 0, TURN_ID))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("occupied seat");
     }
 
@@ -100,7 +100,7 @@ class GameStateTests {
 
         GameState state = new GameState(
                 GAME_ID, HAND_ID, GamePhase.PRE_FLOP, 1, 2, 3, 10L,
-                0, 0, 0, List.of(), ninePlayers, Duration.ZERO, 0, TURN_ID);
+                0, 0, List.of(), ninePlayers, Duration.ZERO, 0, TURN_ID);
 
         assertThat(state.players()).hasSize(9);
     }
@@ -177,12 +177,11 @@ class GameStateTests {
 
     @Test
     void rejectsNegativeGameChipValuesAndRemainingTime() {
-        assertInvalidGameAmount(-1, 0, 0, "currentBet");
-        assertInvalidGameAmount(0, -1, 0, "minimumRaise");
-        assertInvalidGameAmount(0, 0, -1, "mainPot");
+        assertInvalidGameAmount(-1, 0, "currentBet");
+        assertInvalidGameAmount(0, -1, "minimumRaise");
         assertThatThrownBy(() -> new GameState(
                 GAME_ID, HAND_ID, GamePhase.PRE_FLOP, 1, 2, 3, 10L,
-                0, 0, 0, List.of(), players(), Duration.ofSeconds(-1), 0, TURN_ID))
+                0, 0, List.of(), players(), Duration.ofSeconds(-1), 0, TURN_ID))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("remainingTime");
     }
 
@@ -245,7 +244,6 @@ class GameStateTests {
                 currentTurn,
                 20,
                 20,
-                60,
                 board,
                 players,
                 Duration.ofSeconds(30),
@@ -261,10 +259,10 @@ class GameStateTests {
         return new PokerPlayer(userId, seat, 1_000, 0, 0, PokerPlayerState.ACTIVE, List.of());
     }
 
-    private static void assertInvalidGameAmount(long currentBet, long minimumRaise, long mainPot, String field) {
+    private static void assertInvalidGameAmount(long currentBet, long minimumRaise, String field) {
         assertThatThrownBy(() -> new GameState(
                 GAME_ID, HAND_ID, GamePhase.PRE_FLOP, 1, 2, 3, 10L,
-                currentBet, minimumRaise, mainPot, List.of(), players(), Duration.ZERO, 0, TURN_ID))
+                currentBet, minimumRaise, List.of(), players(), Duration.ZERO, 0, TURN_ID))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining(field);
     }
 

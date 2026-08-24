@@ -130,7 +130,6 @@ class PokerPlayerOrthogonalityTests {
                 null,
                 currentBet,
                 100,
-                0,
                 List.of(
                         new Card(Rank.ACE, Suit.SPADES),
                         new Card(Rank.KING, Suit.HEARTS),
