@@ -32,6 +32,7 @@ import org.springframework.messaging.converter.ByteArrayMessageConverter;
 import org.springframework.messaging.converter.CompositeMessageConverter;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
+import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.MessageHandler;
 import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.SimpMessageType;
@@ -85,9 +86,70 @@ class RoomWebSocketStompMySqlIntegrationTests {
     private final List<WebSocketStompClient> clients = new ArrayList<>();
 
     @AfterEach void disconnect() {
-        sessions.stream().filter(StompSession::isConnected).forEach(StompSession::disconnect);
-        clients.forEach(WebSocketStompClient::stop);
-        subscriptions.reset();
+        RuntimeException unexpectedFailure = null;
+        try {
+            for (StompSession session : sessions) {
+                try {
+                    disconnectQuietly(session);
+                } catch (RuntimeException exception) {
+                    if (unexpectedFailure == null) {
+                        unexpectedFailure = exception;
+                    } else {
+                        unexpectedFailure.addSuppressed(exception);
+                    }
+                }
+            }
+        } finally {
+            clients.forEach(WebSocketStompClient::stop);
+            subscriptions.reset();
+        }
+        if (unexpectedFailure != null) {
+            throw unexpectedFailure;
+        }
+    }
+
+    private void disconnectQuietly(StompSession session) {
+        if (session == null) {
+            return;
+        }
+        try {
+            if (session.isConnected()) {
+                session.disconnect();
+            }
+        } catch (MessageDeliveryException exception) {
+            if (!isAlreadyClosedWebSocket(exception)) {
+                throw exception;
+            }
+        }
+    }
+
+    private static boolean isAlreadyClosedWebSocket(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof IllegalStateException) {
+                boolean tomcatClosedSessionState = java.util.Arrays.stream(current.getStackTrace())
+                        .anyMatch(frame -> frame.getClassName().equals("org.apache.tomcat.websocket.WsSession")
+                                && frame.getMethodName().equals("checkState"));
+                if (tomcatClosedSessionState) {
+                    return true;
+                }
+
+                String message = current.getMessage();
+                if (message != null) {
+                    String normalized = message.toLowerCase(java.util.Locale.ROOT);
+                    if (normalized.contains("session")
+                            && normalized.contains("closed")
+                            && (normalized.contains("websocket") || normalized.contains("web socket"))) {
+                        return true;
+                    }
+                }
+            }
+            if (current.getCause() == current) {
+                break;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     @Test

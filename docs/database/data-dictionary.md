@@ -104,8 +104,22 @@ Constraints/indexes: `pk_room_players`, `uk_room_players_room_user`, `uk_room_pl
 - Future buy-in transfers Account Chips to Table Chips; legal cash-out transfers remaining Table Chips back.
 - Only server application services may perform these transfers, atomically and with later audit support. Phase 2 supplies storage constraints only.
 
+## Phase 6A gameplay-history tables — owner: game
+
+- `game_sessions`: room FK, readable `ACTIVE`/`FINISHED`/`ABORTED` status, start/end timestamps. Multiple historical sessions per room are allowed.
+- `poker_hands`: session FK, positive per-session `hand_number`, dealer/blind seats and amounts, final phase/end reason, timestamps, and canonical board-card string. `(game_session_id, hand_number)` is unique.
+- `hand_players`: per-hand user/seat snapshot, starting/ending/committed chips, `ACTIVE`/`FOLDED`/`ALL_IN` participation, independent connectivity/leaving flags, and private canonical hole-card string. User and seat are unique per hand.
+- `player_actions`: server-accepted action audit with explicit positive `action_sequence`, street, six readable action types, authoritative financial results, command identifiers, and timestamp. `(poker_hand_id, action_sequence)` is unique.
+- `pots`: ordered `MAIN`/`SIDE` layers with positive amount and contribution cap. `(poker_hand_id, pot_index)` is unique and index zero is reserved for MAIN.
+- `pot_awards`: normalized winner/payout rows supporting tied pots and explicit odd-chip amounts. `(pot_id, user_id)` is unique.
+- `uncalled_bet_returns`: explicit positive unmatched-bet refunds, separate from contested pots. `(poker_hand_id, user_id)` is unique.
+
+Card strings use stable two-character rank/suit codes separated by commas; Java objects and native serialization are never stored. Hole-card columns remain persistence-private and are not generic public projections.
+
+All gameplay chip values have database checks, seats are restricted to 1–9, enums are constrained readable strings, chronological semantic ordering uses hand/action/pot sequence columns, and foreign keys retain room/user ownership.
+
 ## Planned tables
 
-The following remain planned and are not present in the Phase 2 schema: `friendships`, `chat_messages`, `game_sessions`, `poker_hands`, `hand_players`, `player_actions`, `pots`, `player_statistics`, `player_rankings`, `ranking_history`, `daily_statistics`, and `weekly_statistics`.
+The following remain planned after Phase 6A: `friendships`, `chat_messages`, `player_statistics`, `player_rankings`, `ranking_history`, `daily_statistics`, and `weekly_statistics`.
 
-Future persistence must retain the distinction that one Game Session contains many Poker Hands. No placeholders, migrations, entities, or repositories for these future tables are created in Phase 2.
+Gameplay persistence retains the distinction that one Game Session contains many Poker Hands. Runtime hand finalization and transaction orchestration are intentionally not implemented by Phase 6A.

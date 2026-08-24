@@ -86,8 +86,29 @@ erDiagram
 - Room-player state is `NOT_READY`, `READY`, `PLAYING`, `SPECTATING`, `DISCONNECTED`, or `LEAVING`.
 - Account/Table Chips cannot be negative. Room capacity is 6–9, blinds and buy-in are positive, and the big blind exceeds the small blind.
 
-## Planned, not implemented in Phase 2
+## Phase 6A gameplay-history schema
 
-The frozen logical model still plans `friendships`, `chat_messages`, `game_sessions`, `poker_hands`, `hand_players`, `player_actions`, `pots`, `player_statistics`, `player_rankings`, `ranking_history`, `daily_statistics`, and `weekly_statistics`. They have no Phase 2 migrations or JPA mappings.
+Flyway `V5` adds the game-owned history model. A room can have many sessions and a session can have many numbered hands. Hands own immutable participant/action/pot settlement snapshots.
 
-A Game Session will represent continuous play in one room and contain many individual Poker Hands. That distinction remains authoritative even though neither table is implemented yet.
+```mermaid
+erDiagram
+  ROOMS ||--o{ GAME_SESSIONS : hosts
+  GAME_SESSIONS ||--o{ POKER_HANDS : contains
+  POKER_HANDS ||--o{ HAND_PLAYERS : snapshots
+  POKER_HANDS ||--o{ PLAYER_ACTIONS : records
+  POKER_HANDS ||--o{ POTS : resolves
+  POTS ||--o{ POT_AWARDS : splits
+  POKER_HANDS ||--o{ UNCALLED_BET_RETURNS : refunds
+  USERS ||--o{ HAND_PLAYERS : participates
+  USERS ||--o{ PLAYER_ACTIONS : acts
+  USERS ||--o{ POT_AWARDS : wins
+  USERS ||--o{ UNCALLED_BET_RETURNS : receives
+```
+
+Board and private-card snapshots use deterministic comma-separated card codes such as `AS,KD,7H`. They are history storage, not public transport fields. Pot winners are normalized through `pot_awards`, allowing ties and per-winner payouts; unmatched excess is represented separately by `uncalled_bet_returns`.
+
+## Planned after Phase 6A
+
+The frozen logical model still plans `friendships`, `chat_messages`, `player_statistics`, `player_rankings`, `ranking_history`, `daily_statistics`, and `weekly_statistics`.
+
+A Game Session now represents continuous play in one room and contains many individual Poker Hands. Phase 6A supplies persistence mappings only; runtime orchestration remains deferred.

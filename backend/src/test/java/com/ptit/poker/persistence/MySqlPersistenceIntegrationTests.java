@@ -48,7 +48,9 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 class MySqlPersistenceIntegrationTests {
 
         private static final Set<String> REQUIRED_TABLES = Set.of(
-                        "users", "player_profiles", "refresh_tokens", "rooms", "room_players");
+                        "users", "player_profiles", "refresh_tokens", "rooms", "room_players",
+                        "game_sessions", "poker_hands", "hand_players", "player_actions", "pots",
+                        "pot_awards", "uncalled_bet_returns");
 
         @Autowired
         private Flyway flyway;
@@ -74,7 +76,7 @@ class MySqlPersistenceIntegrationTests {
         @Test
         void flywayAndHibernateValidateTheRequiredSchema() {
                 assertThat(flyway.info().current()).isNotNull();
-                assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("4");
+                assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("5");
 
                 Set<String> tables = Set.copyOf(jdbcTemplate.queryForList(
                                 "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()",
