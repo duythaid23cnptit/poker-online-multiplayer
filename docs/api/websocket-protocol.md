@@ -55,6 +55,22 @@ Private command result/error example:
 
 ## Client commands
 
+Phase 4 implements STOMP at `/ws` without SockJS. A client supplies `Authorization: Bearer <access-token>` in the STOMP `CONNECT` headers. The server validates the Phase 3 JWT, reloads the active account, and binds the authenticated principal. `/topic/lobby` requires authentication; `/topic/room/{roomId}` additionally requires active membership on every `SUBSCRIBE`.
+
+Implemented Phase 4 command:
+
+```text
+/app/room/{roomId}/ready
+```
+
+Payload:
+
+```json
+{ "clientCommandId": "uuid", "ready": true }
+```
+
+The handler ignores client identity/state fields and resolves membership from the authenticated principal. Only an active seated member in a `WAITING` room can ready or unready.
+
 | Destination | Command | Required payload |
 |---|---|---|
 | `/app/room/{roomId}/ready` | `SET_READY` | `clientCommandId`, `ready` |
@@ -69,13 +85,20 @@ Room creation/join/leave remain REST commands initially because they require dur
 
 Lobby topic examples:
 
-- `ROOM_CREATED`, `ROOM_UPDATED`, `ROOM_REMOVED` with sanitized lobby summaries;
-- aggregate presence/count updates if approved.
+- `ROOM_CREATED`, `ROOM_UPDATED`, and `ROOM_CLOSED` with sanitized lobby summaries;
+- `PLAYER_COUNT_CHANGED` when seated or spectator membership changes.
 
 Room topic examples:
 
-- `MEMBER_JOINED`, `MEMBER_LEFT`, `OWNER_CHANGED`;
-- `PLAYER_STATE_CHANGED`, `READY_CHANGED`, `ROOM_STATE_CHANGED`, `ROOM_SETTINGS_CHANGED`;
+- `PLAYER_JOINED` and `PLAYER_LEFT`;
+- `PLAYER_READY` and `PLAYER_UNREADY`;
+- `PLAYER_DISCONNECTED` and `PLAYER_RECONNECTED` are reserved until reconnect behavior is implemented.
+
+The canonical Phase 4 vocabulary is `ROOM_CREATED`, `ROOM_UPDATED`, `ROOM_CLOSED`,
+`PLAYER_COUNT_CHANGED`, `PLAYER_JOINED`, `PLAYER_LEFT`, `PLAYER_READY`, and
+`PLAYER_UNREADY`. No `MEMBER_*`, `READY_CHANGED`, or `ROOM_REMOVED` aliases are used.
+Events use protocol version 1, a unique event ID, UTC occurrence time, room scope,
+and a sanitized summary/snapshot payload. Publication occurs only after the database transaction commits.
 - `CHAT_MESSAGE_CREATED`;
 - `GAME_STARTED`, `GAME_ENDED`.
 

@@ -5,6 +5,7 @@ import com.ptit.poker.auth.application.exception.AuthenticationFailedException;
 import com.ptit.poker.auth.application.exception.DuplicateAccountException;
 import com.ptit.poker.auth.application.exception.InvalidRefreshTokenException;
 import com.ptit.poker.player.application.exception.ProfileNotFoundException;
+import com.ptit.poker.room.application.exception.RoomBusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -19,6 +20,11 @@ import java.util.List;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(RoomBusinessException.class)
+    ResponseEntity<ApiError> roomBusiness(RoomBusinessException exception) {
+        return ResponseEntity.status(exception.status()).body(ApiError.of(exception.code(), exception.getMessage()));
+    }
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 

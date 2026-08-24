@@ -60,6 +60,22 @@ Realtime friend notifications/presence and new chat messages use STOMP.
 
 ## Lobby and rooms
 
+Phase 4 uses authenticated `/api/v1/rooms` endpoints. All identities come from the JWT principal; requests never accept an owner or member user ID.
+
+| Method | Path | Phase 4 behavior |
+|---|---|---|
+| `GET` | `/api/v1/rooms` | Sanitized `WAITING` lobby summaries, ordered by latest activity |
+| `POST` | `/api/v1/rooms` | Creates a `WAITING` public/private room and an owner spectator membership |
+| `GET` | `/api/v1/rooms/{roomId}` | Sanitized snapshot for an active member |
+| `POST` | `/api/v1/rooms/{roomId}/join` | Joins/rejoins as spectator or seated player; seated join atomically transfers the configured buy-in |
+| `POST` | `/api/v1/rooms/{roomId}/leave` | Leaves a `WAITING` room, cashes out, releases the seat, and applies owner succession |
+
+`CreateRoomRequest` contains `name`, `roomType`, `maxPlayers`, `smallBlind`, `bigBlind`, `buyIn`, and an optional private-room `password`. Public rooms reject passwords. Private passwords are BCrypt hashes at rest and neither raw values nor hashes appear in responses or events.
+
+`JoinRoomRequest` contains `spectator`, optional `seatNumber`, optional `buyInAmount`, and optional private-room `password`. A seated join requires a free seat within `1..maxPlayers` and exactly the configured buy-in. A spectator has a null seat and zero Table Chips. Controlled errors include `ROOM_NOT_FOUND`, `ROOM_NOT_JOINABLE`, `INVALID_ROOM_PASSWORD`, `ALREADY_JOINED`, `ROOM_FULL`, `INVALID_SEAT`, `SEAT_OCCUPIED`, `INVALID_BUY_IN`, and `INSUFFICIENT_CHIPS`.
+
+In `WAITING`, leave returns all remaining Table Chips to Account Chips atomically. If the owner leaves, ownership transfers to the earliest remaining active membership; an empty room becomes `CLOSED`. Active-game leave is deliberately rejected until the Poker Engine owns that transition.
+
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/rooms` | Filtered/paginated public lobby list |

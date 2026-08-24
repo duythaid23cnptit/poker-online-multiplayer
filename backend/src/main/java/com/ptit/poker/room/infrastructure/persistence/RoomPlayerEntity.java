@@ -57,9 +57,33 @@ public class RoomPlayerEntity {
     public Long getId() {
         return id;
     }
+    public Long getRoomId() { return roomId; }
+    public Long getUserId() { return userId; }
+    public Integer getSeatNumber() { return seatNumber; }
+    public RoomPlayerState getPlayerState() { return playerState; }
+    public long getTableChips() { return tableChips; }
+    public Instant getJoinedAt() { return joinedAt; }
+    public Instant getLeftAt() { return leftAt; }
 
-    public long getTableChips() {
-        return tableChips;
+    public boolean isActive() { return leftAt == null; }
+
+    public void join(Integer seat, long chips) {
+        seatNumber = seat;
+        playerState = seat == null ? RoomPlayerState.SPECTATING : RoomPlayerState.NOT_READY;
+        tableChips = chips;
+        leftAt = null;
+    }
+
+    public void setReady(boolean ready) {
+        playerState = ready ? RoomPlayerState.READY : RoomPlayerState.NOT_READY;
+    }
+
+    public long leave(Instant at) {
+        long cashOut = tableChips;
+        tableChips = 0;
+        seatNumber = null;
+        playerState = RoomPlayerState.SPECTATING;
+        leftAt = at;
+        return cashOut;
     }
 }
-

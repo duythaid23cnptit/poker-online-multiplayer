@@ -1,0 +1,14 @@
+package com.ptit.poker.room.api.event;
+
+public enum RoomEventType {
+    ROOM_CREATED,
+    ROOM_UPDATED,
+    ROOM_CLOSED,
+    PLAYER_COUNT_CHANGED,
+    PLAYER_JOINED,
+    PLAYER_LEFT,
+    PLAYER_READY,
+    PLAYER_UNREADY,
+    PLAYER_DISCONNECTED,
+    PLAYER_RECONNECTED
+}

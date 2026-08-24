@@ -22,9 +22,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.orm.jpa.JpaSystemException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +36,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 @EnabledIfEnvironmentVariable(named = "TEST_DB_URL", matches = ".+")
 @EnabledIfEnvironmentVariable(named = "TEST_DB_USERNAME", matches = ".+")
@@ -112,20 +113,18 @@ class MySqlPersistenceIntegrationTests {
 
         @Test
         void negativeAccountChipsAreRejected() {
-                assertThatThrownBy(() -> userRepository.saveAndFlush(newUser(-1)))
-                                .isInstanceOf(DataAccessException.class)
-                                .rootCause()
-                                .hasMessageContaining("chk_users_account_chips_non_negative");
+                assertCheckConstraintViolation(
+                                () -> userRepository.saveAndFlush(newUser(-1)),
+                                "chk_users_account_chips_non_negative");
         }
 
         @Test
         void roomCapacityOutsideSixToNineIsRejected() {
                 UserEntity owner = userRepository.saveAndFlush(newUser(0));
 
-                assertThatThrownBy(() -> roomRepository.saveAndFlush(newRoom(owner.getId(), 5)))
-                                .isInstanceOf(DataAccessException.class)
-                                .rootCause()
-                                .hasMessageContaining("chk_rooms_max_players");
+                assertCheckConstraintViolation(
+                                () -> roomRepository.saveAndFlush(newRoom(owner.getId(), 5)),
+                                "chk_rooms_max_players");
         }
 
         @Test
@@ -157,11 +156,38 @@ class MySqlPersistenceIntegrationTests {
                 UserEntity user = userRepository.saveAndFlush(newUser(0));
                 RoomEntity room = roomRepository.saveAndFlush(newRoom(user.getId(), 6));
 
-                assertThatThrownBy(() -> roomPlayerRepository.saveAndFlush(new RoomPlayerEntity(
-                                room.getId(), user.getId(), 1, RoomPlayerState.NOT_READY, -1)))
-                                .isInstanceOf(DataAccessException.class)
-                                .rootCause()
-                                .hasMessageContaining("chk_room_players_table_chips_non_negative");
+                assertCheckConstraintViolation(
+                                () -> roomPlayerRepository.saveAndFlush(new RoomPlayerEntity(
+                                                room.getId(), user.getId(), 1, RoomPlayerState.NOT_READY, -1)),
+                                "chk_room_players_table_chips_non_negative");
+        }
+
+        private static void assertCheckConstraintViolation(
+                        org.assertj.core.api.ThrowableAssert.ThrowingCallable persistenceOperation,
+                        String expectedConstraint) {
+                Throwable failure = catchThrowable(persistenceOperation);
+                assertThat(failure)
+                                .as("persistence must reject CHECK constraint %s", expectedConstraint)
+                                .isInstanceOfAny(DataIntegrityViolationException.class, JpaSystemException.class);
+                assertThat(causeChain(failure))
+                                .as("exception cause chain must identify CHECK constraint %s", expectedConstraint)
+                                .containsIgnoringCase(expectedConstraint);
+        }
+
+        private static String causeChain(Throwable failure) {
+                StringBuilder messages = new StringBuilder();
+                Throwable current = failure;
+                while (current != null) {
+                        if (current.getMessage() != null) {
+                                messages.append(current.getClass().getName())
+                                                .append(": ").append(current.getMessage()).append('\n');
+                        }
+                        if (current.getCause() == current) {
+                                break;
+                        }
+                        current = current.getCause();
+                }
+                return messages.toString();
         }
 
         private static UserEntity newUser(long accountChips) {

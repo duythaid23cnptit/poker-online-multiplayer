@@ -80,5 +80,28 @@ public class RoomEntity {
     public Long getId() {
         return id;
     }
-}
 
+    public String getName() { return name; }
+    public Long getOwnerUserId() { return ownerUserId; }
+    public RoomType getRoomType() { return roomType; }
+    public String getPasswordHash() { return passwordHash; }
+    public int getMaxPlayers() { return maxPlayers; }
+    public long getSmallBlind() { return smallBlind; }
+    public long getBigBlind() { return bigBlind; }
+    public long getBuyIn() { return buyIn; }
+    public RoomStatus getStatus() { return status; }
+    public Instant getCreatedAt() { return createdAt; }
+    public Instant getLastActivityAt() { return lastActivityAt; }
+
+    public void transferOwnershipTo(Long userId, Instant activityAt) {
+        ownerUserId = userId;
+        lastActivityAt = activityAt;
+    }
+
+    public void close(Instant activityAt) {
+        status = RoomStatus.CLOSED;
+        lastActivityAt = activityAt;
+    }
+
+    public void recordActivity(Instant activityAt) { lastActivityAt = activityAt; }
+}

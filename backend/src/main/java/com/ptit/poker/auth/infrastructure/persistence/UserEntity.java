@@ -102,4 +102,18 @@ public class UserEntity {
     public void recordLogin(Instant loginAt) {
         this.lastLoginAt = loginAt;
     }
+
+    public void debitAccountChips(long amount) {
+        if (amount <= 0 || accountChips < amount) {
+            throw new IllegalArgumentException("Insufficient account chips");
+        }
+        accountChips -= amount;
+    }
+
+    public void creditAccountChips(long amount) {
+        if (amount < 0) {
+            throw new IllegalArgumentException("Chip amount cannot be negative");
+        }
+        accountChips = Math.addExact(accountChips, amount);
+    }
 }

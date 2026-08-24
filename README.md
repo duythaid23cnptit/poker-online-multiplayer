@@ -4,7 +4,7 @@ A university Network Programming project for real-time multiplayer Texas Hold'em
 
 ## Current status
 
-Phase 0 architecture is frozen. Phase 3 implements the backend authentication and current-profile REST boundary: registration, login, JWT access tokens, hashed opaque refresh tokens, logout, current-user lookup, and own-profile updates. Room behavior, WebSocket behavior, and poker logic are not implemented.
+Phase 0 architecture is frozen. Phase 4 adds authenticated room/lobby REST flows and the `/ws` STOMP foundation on top of Phase 3 authentication. It covers public/private rooms, membership, seats/spectators, ready state, atomic buy-in/cash-out, owner succession, and sanitized post-commit events. The Poker Engine is not implemented.
 
 The approved baseline distinguishes persistent Account Chips from Table Chips transferred through server-controlled buy-in/cash-out, and distinguishes a continuous Game Session from each Poker Hand it contains. Room/player lifecycle, 60-second reconnect handling, and authoritative timeout/leave behavior are specified in the architecture documents.
 
