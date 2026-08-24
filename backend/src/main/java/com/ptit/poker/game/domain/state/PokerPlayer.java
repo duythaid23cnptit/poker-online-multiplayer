@@ -180,6 +180,14 @@ public final class PokerPlayer {
         currentBet = 0;
     }
 
+    /** Applies this hand's prevalidated credits and closes its chip-accounting lifecycle. */
+    public void applyHandSettlement(long creditedChips) {
+        requireNonNegative(creditedChips, "creditedChips");
+        tableChips = Math.addExact(tableChips, creditedChips);
+        currentBet = 0;
+        totalCommitted = 0;
+    }
+
     private static List<Card> validateHoleCards(List<Card> holeCards) {
         Objects.requireNonNull(holeCards, "holeCards must not be null");
         if (holeCards.size() != 0 && holeCards.size() != 2) {

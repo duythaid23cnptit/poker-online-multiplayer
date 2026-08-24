@@ -32,6 +32,7 @@ public final class GameState {
     private UUID turnId;
     private final long minimumBetBaseline;
     private long stateVersion;
+    private boolean financiallySettled;
 
     public GameState(
             UUID gameId,
@@ -165,6 +166,10 @@ public final class GameState {
         return PotBuilder.calculate(players);
     }
 
+    public boolean isFinanciallySettled() {
+        return financiallySettled;
+    }
+
     public List<Card> communityCards() {
         return communityCards;
     }
@@ -278,6 +283,19 @@ public final class GameState {
 
     /** Marks an uncontested hand terminal without performing any pot award. */
     public void finishByFolds() {
+        phase = GamePhase.FINISHED;
+        assignTurn(null, null);
+    }
+
+    /** Completes a successfully planned settlement exactly once. */
+    public void completeFinancialSettlement() {
+        if (financiallySettled) {
+            throw new IllegalStateException("hand is already financially settled");
+        }
+        if (phase != GamePhase.SHOWDOWN && phase != GamePhase.FINISHED) {
+            throw new IllegalStateException("hand outcome must be decided before settlement");
+        }
+        financiallySettled = true;
         phase = GamePhase.FINISHED;
         assignTurn(null, null);
     }
