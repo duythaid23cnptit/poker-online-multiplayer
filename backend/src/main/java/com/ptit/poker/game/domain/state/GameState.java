@@ -22,8 +22,8 @@ public final class GameState {
     private final int smallBlindPosition;
     private final int bigBlindPosition;
     private final Long currentTurnUserId;
-    private final long currentBet;
-    private final long minimumRaise;
+    private long currentBet;
+    private long minimumRaise;
     private final long mainPot;
     private final List<Card> communityCards;
     private final List<PokerPlayer> players;
@@ -67,6 +67,9 @@ public final class GameState {
         }
 
         this.players = validateAndOrderPlayers(players);
+        if (this.players.stream().anyMatch(player -> player.currentBet() > currentBet)) {
+            throw new IllegalArgumentException("player currentBet must not exceed GameState currentBet");
+        }
         validatePositionIsOccupied(dealerPosition, "dealerPosition", this.players);
         validatePositionIsOccupied(smallBlindPosition, "smallBlindPosition", this.players);
         validatePositionIsOccupied(bigBlindPosition, "bigBlindPosition", this.players);
@@ -142,6 +145,43 @@ public final class GameState {
 
     public UUID turnId() {
         return turnId;
+    }
+
+    public PokerPlayer requirePlayer(long userId) {
+        return players.stream()
+                .filter(player -> player.userId() == userId)
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("userId does not identify a player in the game"));
+    }
+
+    /** Records the first full wager of a street. */
+    public void recordOpeningBet(long newCurrentBet) {
+        if (currentBet != 0) {
+            throw new IllegalStateException("an opening bet requires no existing wager");
+        }
+        if (newCurrentBet <= 0) {
+            throw new IllegalArgumentException("newCurrentBet must be positive");
+        }
+        currentBet = newCurrentBet;
+        minimumRaise = newCurrentBet;
+    }
+
+    /** Records a full raise and establishes its size as the next minimum raise. */
+    public void recordFullRaise(long newCurrentBet, long raiseSize) {
+        if (newCurrentBet <= currentBet || raiseSize <= 0
+                || Math.subtractExact(newCurrentBet, currentBet) != raiseSize) {
+            throw new IllegalArgumentException("full raise values are inconsistent");
+        }
+        currentBet = newCurrentBet;
+        minimumRaise = raiseSize;
+    }
+
+    /** Records a short all-in increase without reopening or changing the minimum raise. */
+    public void recordShortAllInRaise(long newCurrentBet) {
+        if (newCurrentBet <= currentBet) {
+            throw new IllegalArgumentException("short all-in must increase currentBet");
+        }
+        currentBet = newCurrentBet;
     }
 
     /** Advances the authoritative state version exactly once. */

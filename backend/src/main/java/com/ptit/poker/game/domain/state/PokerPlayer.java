@@ -14,9 +14,9 @@ public final class PokerPlayer {
 
     private final long userId;
     private final int seatNumber;
-    private final long tableChips;
-    private final long currentBet;
-    private final long totalCommitted;
+    private long tableChips;
+    private long currentBet;
+    private long totalCommitted;
     private final List<Card> holeCards;
     private PokerPlayerState playerState;
 
@@ -89,6 +89,26 @@ public final class PokerPlayer {
 
     public void markLeaving() {
         playerState = PokerPlayerState.LEAVING;
+    }
+
+    /** Commits chips immediately while preserving all player accounting invariants. */
+    public void commitChips(long amount) {
+        if (playerState != PokerPlayerState.ACTIVE) {
+            throw new IllegalStateException("only an ACTIVE player can commit chips");
+        }
+        requireNonNegative(amount, "amount");
+        if (amount > tableChips) {
+            throw new IllegalArgumentException("amount cannot exceed tableChips");
+        }
+
+        long updatedCurrentBet = Math.addExact(currentBet, amount);
+        long updatedTotalCommitted = Math.addExact(totalCommitted, amount);
+        tableChips -= amount;
+        currentBet = updatedCurrentBet;
+        totalCommitted = updatedTotalCommitted;
+        if (tableChips == 0) {
+            playerState = PokerPlayerState.ALL_IN;
+        }
     }
 
     private static List<Card> validateHoleCards(List<Card> holeCards) {
