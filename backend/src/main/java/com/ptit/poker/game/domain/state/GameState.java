@@ -275,9 +275,7 @@ public final class GameState {
         phase = nextPhase;
         currentBet = 0;
         minimumRaise = minimumBetBaseline;
-        players.stream()
-                .filter(player -> player.playerState() != PokerPlayerState.FOLDED)
-                .forEach(PokerPlayer::resetCurrentBetForNewStreet);
+        players.forEach(PokerPlayer::resetCurrentBetForNewStreet);
         assignTurn(null, null);
     }
 
