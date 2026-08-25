@@ -294,6 +294,12 @@ class HandSettlementEngineTests {
         assertThatThrownBy(() -> result.potAwards().add(award)).isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> result.evaluatedHands().clear()).isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> result.totalCredits().clear()).isInstanceOf(UnsupportedOperationException.class);
+        assertThat(result.totalCommittedByUser()).containsExactlyInAnyOrderEntriesOf(
+                java.util.Map.of(1L, 100L, 2L, 100L));
+        assertThat(first.totalCommitted()).isZero();
+        assertThat(second.totalCommitted()).isZero();
+        assertThatThrownBy(() -> result.totalCommittedByUser().clear())
+                .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> award.winnerUserIds().add(9L)).isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> award.winnerPayouts().clear()).isInstanceOf(UnsupportedOperationException.class);
     }

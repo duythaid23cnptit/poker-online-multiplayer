@@ -36,4 +36,8 @@ public class PokerHandEntity {
     public GamePhase getFinalPhase() { return finalPhase; }
     public String getBoardCards() { return boardCards; }
     public HandEndReason getEndReason() { return endReason; }
+    public void complete(Instant endedAt, GamePhase finalPhase, String boardCards, HandEndReason endReason) {
+        if (this.endReason != null) throw new IllegalStateException("poker hand is already completed");
+        this.endedAt = endedAt; this.finalPhase = finalPhase; this.boardCards = boardCards; this.endReason = endReason;
+    }
 }

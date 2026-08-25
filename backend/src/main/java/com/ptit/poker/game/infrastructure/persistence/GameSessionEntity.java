@@ -20,4 +20,13 @@ public class GameSessionEntity {
     public GameSessionStatus getStatus() { return status; }
     public Instant getStartedAt() { return startedAt; }
     public Instant getEndedAt() { return endedAt; }
+    public void finish(Instant endedAt) {
+        requireActive(); this.status = GameSessionStatus.FINISHED; this.endedAt = endedAt;
+    }
+    public void abort(Instant endedAt) {
+        requireActive(); this.status = GameSessionStatus.ABORTED; this.endedAt = endedAt;
+    }
+    private void requireActive() {
+        if (status != GameSessionStatus.ACTIVE) throw new IllegalStateException("game session is not ACTIVE");
+    }
 }

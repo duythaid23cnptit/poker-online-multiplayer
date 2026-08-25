@@ -181,6 +181,10 @@ public final class HandSettlementEngine {
         }
 
         long committed = sumCommitted(gameState.players());
+        Map<Long, Long> committedByUser = new LinkedHashMap<>();
+        for (PokerPlayer player : gameState.players()) {
+            committedByUser.put(player.userId(), player.totalCommitted());
+        }
         long planned = Math.addExact(pots.contestedAmount(), pots.uncalledAmount());
         if (committed != planned || sumValues(credits) != planned) {
             throw new IllegalStateException("settlement plan does not conserve committed chips");
@@ -201,7 +205,8 @@ public final class HandSettlementEngine {
         }
         gameState.completeFinancialSettlement();
         return new HandSettlementResult(
-                evaluatedHands, awards, pots.uncalledBetReturns(), credits, planned,
+                evaluatedHands, pots.contestedPots(), awards, pots.uncalledBetReturns(),
+                committedByUser, credits, planned,
                 foldOnly, systemBefore, projectedAfter);
     }
 
