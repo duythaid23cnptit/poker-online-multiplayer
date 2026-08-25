@@ -17,7 +17,7 @@ public final class PokerPlayer {
     private long tableChips;
     private long currentBet;
     private long totalCommitted;
-    private final List<Card> holeCards;
+    private List<Card> holeCards;
     private PokerPlayerState playerState;
     private boolean connected;
     private boolean leaving;
@@ -102,6 +102,18 @@ public final class PokerPlayer {
 
     public List<Card> holeCards() {
         return holeCards;
+    }
+
+    /** Deals this hand's private cards exactly once after blind posting. */
+    public void dealHoleCards(List<Card> cards) {
+        if (!holeCards.isEmpty()) {
+            throw new IllegalStateException("hole cards are already dealt");
+        }
+        List<Card> dealt = validateHoleCards(cards);
+        if (dealt.size() != 2) {
+            throw new IllegalArgumentException("dealt hole cards must contain exactly 2 cards");
+        }
+        holeCards = dealt;
     }
 
     public boolean isConnected() {

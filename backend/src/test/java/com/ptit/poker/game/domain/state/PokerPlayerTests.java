@@ -110,6 +110,21 @@ class PokerPlayerTests {
                 PokerPlayerState.ALL_IN);
     }
 
+    @Test
+    void dealsHoleCardsExactlyOnceAfterBlindPosting() {
+        PokerPlayer player = player(10, 1, 1_000, 0, 0, PokerPlayerState.ACTIVE, List.of());
+        player.commitChips(50);
+        List<Card> dealt = List.of(card(Rank.ACE, Suit.SPADES), card(Rank.KING, Suit.HEARTS));
+
+        player.dealHoleCards(dealt);
+
+        assertThat(player.tableChips()).isEqualTo(950);
+        assertThat(player.totalCommitted()).isEqualTo(50);
+        assertThat(player.holeCards()).containsExactlyElementsOf(dealt);
+        assertThatThrownBy(() -> player.dealHoleCards(dealt))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("already dealt");
+    }
+
     private static PokerPlayer player(
             long userId,
             int seat,

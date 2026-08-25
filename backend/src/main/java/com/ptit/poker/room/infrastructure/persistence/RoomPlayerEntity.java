@@ -78,6 +78,16 @@ public class RoomPlayerEntity {
         playerState = ready ? RoomPlayerState.READY : RoomPlayerState.NOT_READY;
     }
 
+    public void markPlaying() {
+        if (seatNumber == null || leftAt != null) throw new IllegalStateException("only a seated member can play");
+        playerState = RoomPlayerState.PLAYING;
+    }
+
+    public void synchronizeTableChips(long chips) {
+        if (chips < 0) throw new IllegalArgumentException("table chips must not be negative");
+        tableChips = chips;
+    }
+
     public long leave(Instant at) {
         long cashOut = tableChips;
         tableChips = 0;
