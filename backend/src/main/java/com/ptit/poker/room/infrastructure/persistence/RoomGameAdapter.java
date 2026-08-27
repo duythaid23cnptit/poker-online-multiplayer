@@ -7,11 +7,21 @@ import java.util.List;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.context.ApplicationEventPublisher;
+import com.ptit.poker.room.application.RoomChangedEvent;
+import com.ptit.poker.room.api.event.RoomEventType;
+import java.util.Map;
+import com.ptit.poker.player.application.RoomPlayerAccountPort;
+import java.time.Clock;
 
 @Component @Profile("!bootstrap")
 public class RoomGameAdapter implements RoomGamePort {
-    private final RoomRepository rooms; private final RoomPlayerRepository players;
-    public RoomGameAdapter(RoomRepository rooms, RoomPlayerRepository players) { this.rooms = rooms; this.players = players; }
+    private final RoomRepository rooms; private final RoomPlayerRepository players; private final ApplicationEventPublisher events;
+    private final RoomPlayerAccountPort accounts; private final Clock clock;
+    public RoomGameAdapter(RoomRepository rooms, RoomPlayerRepository players, ApplicationEventPublisher events,
+                           RoomPlayerAccountPort accounts, Clock clock) {
+        this.rooms = rooms; this.players = players; this.events = events; this.accounts=accounts; this.clock=clock;
+    }
     @Override @Transactional(readOnly = true)
     public RoomGameSnapshot load(long roomId) {
         RoomEntity room = rooms.findById(roomId).orElseThrow(() -> new IllegalArgumentException("room not found"));
@@ -33,6 +43,26 @@ public class RoomGameAdapter implements RoomGamePort {
     @Override @Transactional(readOnly = true)
     public boolean canObserve(long roomId, long userId) {
         return players.findByRoomIdAndUserId(roomId, userId).filter(RoomPlayerEntity::isActive).isPresent();
+    }
+    @Override @Transactional
+    public void markDisconnected(long roomId, long userId) {
+        require(roomId, userId).markDisconnected();
+        events.publishEvent(new RoomChangedEvent(roomId, RoomEventType.PLAYER_DISCONNECTED,
+                Map.of("userId", userId, "state", RoomPlayerState.DISCONNECTED), null, null));
+    }
+    @Override @Transactional
+    public void markReconnected(long roomId, long userId) {
+        require(roomId, userId).markReconnected();
+        events.publishEvent(new RoomChangedEvent(roomId, RoomEventType.PLAYER_RECONNECTED,
+                Map.of("userId", userId, "state", RoomPlayerState.PLAYING), null, null));
+    }
+    @Override @Transactional
+    public void finalizeActiveGameDeparture(long roomId,long userId) {
+        RoomPlayerEntity member=require(roomId,userId);
+        long cashOut=member.leave(clock.instant());
+        accounts.credit(userId,cashOut);
+        events.publishEvent(new RoomChangedEvent(roomId,RoomEventType.PLAYER_LEFT,
+                Map.of("userId",userId),RoomEventType.PLAYER_COUNT_CHANGED,Map.of("roomId",roomId)));
     }
     private RoomPlayerEntity require(long roomId, long userId) {
         return players.findByRoomIdAndUserIdForUpdate(roomId, userId)

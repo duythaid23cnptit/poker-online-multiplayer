@@ -9,6 +9,7 @@ import com.ptit.poker.game.api.realtime.GameEventType;
 import com.ptit.poker.game.application.realtime.GameRealtimeApplicationService;
 import com.ptit.poker.game.application.runtime.*;
 import com.ptit.poker.game.infrastructure.persistence.PlayerActionRepository;
+import com.ptit.poker.game.infrastructure.persistence.PokerHandRepository;
 import com.ptit.poker.room.api.dto.*;
 import com.ptit.poker.room.application.RoomApplicationService;
 import com.ptit.poker.room.domain.*;
@@ -17,6 +18,7 @@ import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.function.Predicate;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,6 +48,7 @@ class GameWebSocketStompMySqlIntegrationTests {
     @Autowired UserRepository users; @Autowired PasswordEncoder passwords; @Autowired JwtService jwt;
     @Autowired RoomApplicationService rooms; @Autowired GameRuntimeService runtime;
     @Autowired GameRealtimeApplicationService realtime; @Autowired PlayerActionRepository actions;
+    @Autowired PokerHandRepository hands;
     @Autowired ObjectMapper json; @Autowired RoomWebSocketStompMySqlIntegrationTests.SubscriptionProbe subscriptions;
     private final List<StompSession> sessions = new ArrayList<>();
     private final List<WebSocketStompClient> clients = new ArrayList<>();
@@ -71,15 +74,15 @@ class GameWebSocketStompMySqlIntegrationTests {
         Handler firstHandler=new Handler(), secondHandler=new Handler(), spectatorHandler=new Handler(), outsiderHandler=new Handler();
         StompSession firstSession=connect(first,firstHandler), secondSession=connect(second,secondHandler), spectatorSession=connect(spectator,spectatorHandler);
         StompSession outsiderSession=connect(outsider,outsiderHandler);
-        QueueFrames firstPublic=new QueueFrames(), secondPublic=new QueueFrames(), spectatorPublic=new QueueFrames();
-        QueueFrames firstPrivate=new QueueFrames(), secondPrivate=new QueueFrames(), spectatorPrivate=new QueueFrames();
+        QueueFrames firstPublic=new QueueFrames(started), secondPublic=new QueueFrames(started), spectatorPublic=new QueueFrames(started);
+        QueueFrames firstPrivate=new QueueFrames(started), secondPrivate=new QueueFrames(started), spectatorPrivate=new QueueFrames(started);
         subscribe(firstSession,"/topic/game/"+started.gameId(),firstPublic);
         subscribe(secondSession,"/topic/game/"+started.gameId(),secondPublic);
         subscribe(spectatorSession,"/topic/game/"+started.gameId(),spectatorPublic);
         subscribe(firstSession,"/user/queue/private",firstPrivate);
         subscribe(secondSession,"/user/queue/private",secondPrivate);
         subscribe(spectatorSession,"/user/queue/private",spectatorPrivate);
-        outsiderSession.subscribe("/topic/game/"+started.gameId(),new QueueFrames());
+        outsiderSession.subscribe("/topic/game/"+started.gameId(),new QueueFrames(started));
         assertThat(outsiderHandler.failure.get(5,TimeUnit.SECONDS)).isNotNull();
 
         realtime.announceStartedGame(started);
@@ -110,7 +113,9 @@ class GameWebSocketStompMySqlIntegrationTests {
         actorSession.send("/app/game/"+started.gameId()+"/action",Map.of("actionType","FOLD","turnId",started.turnId(),"clientActionId",clientId));
         JsonNode action=await(secondPublic,GameEventType.PLAYER_ACTION);
         assertThat(action.at("/payload/clientActionId").asText()).isEqualTo(clientId.toString());
-        await(secondPublic,GameEventType.GAME_RESULT); await(secondPublic,GameEventType.HAND_FINISHED);
+        await(secondPublic,GameEventType.GAME_RESULT); await(secondPublic,GameEventType.HAND_FINISHED,
+                node->node.at("/payload/handId").asLong()==started.handId());
+        secondPublic.assertOrder(GameEventType.PLAYER_ACTION,GameEventType.GAME_RESULT,GameEventType.HAND_FINISHED);
         assertThat(actions.findAllByPokerHandIdOrderByActionSequence(started.handId())).hasSize(1);
 
         actorSession.send("/app/game/"+started.gameId()+"/action",Map.of("actionType","FOLD","turnId",started.turnId(),"clientActionId",UUID.randomUUID()));
@@ -118,21 +123,26 @@ class GameWebSocketStompMySqlIntegrationTests {
         await(actorPrivate,GameEventType.COMMAND_ERROR);
         assertThat(actions.findAllByPokerHandIdOrderByActionSequence(started.handId())).hasSize(1);
 
-        realtime.startNextHand(started.gameId());
-        assertThat(await(secondPublic,GameEventType.HAND_STARTED).at("/payload/handNumber").asLong()).isEqualTo(2);
+        GameRuntimeView secondHand=realtime.startNextHand(started.gameId());
+        assertThat(secondHand.handNumber()).isEqualTo(2);
+        assertThat(secondHand.handId()).isNotEqualTo(started.handId());
+        assertThat(awaitSecondHandStarted(secondPublic,started,secondHand).at("/payload/handNumber").asLong()).isEqualTo(2);
+        secondPublic.assertOrder(GameEventType.HAND_FINISHED,GameEventType.HAND_STARTED);
         assertThat(await(firstPrivate,GameEventType.HOLE_CARDS).at("/payload/handId").asLong()).isNotEqualTo(started.handId());
         assertThat(await(secondPrivate,GameEventType.HOLE_CARDS).at("/payload/handId").asLong()).isNotEqualTo(started.handId());
     }
 
     @Test void deadlineAutoFoldPersistsAndPublishesTerminalEvents() throws Exception {
         Fixture fixture=fixture(); GameRuntimeView started=runtime.startGame(fixture.roomId());
-        Handler handler=new Handler();StompSession session=connect(fixture.first(),handler);QueueFrames publicFrames=new QueueFrames();
+        Handler handler=new Handler();StompSession session=connect(fixture.first(),handler);QueueFrames publicFrames=new QueueFrames(started);
         subscribe(session,"/topic/game/"+started.gameId(),publicFrames);realtime.announceStartedGame(started);
         await(publicFrames,GameEventType.TIMER_UPDATE);
         JsonNode action=await(publicFrames,GameEventType.PLAYER_ACTION);
         assertThat(action.at("/payload/actionType").asText()).isEqualTo("FOLD");
         assertThat(action.at("/payload/automatic").asBoolean()).isTrue();
-        await(publicFrames,GameEventType.GAME_RESULT);await(publicFrames,GameEventType.HAND_FINISHED);
+        await(publicFrames,GameEventType.GAME_RESULT);await(publicFrames,GameEventType.HAND_FINISHED,
+                node->node.at("/payload/handId").asLong()==started.handId());
+        publicFrames.assertOrder(GameEventType.PLAYER_ACTION,GameEventType.GAME_RESULT,GameEventType.HAND_FINISHED);
         assertThat(actions.findAllByPokerHandIdOrderByActionSequence(started.handId())).hasSize(1)
                 .extracting(value->value.getActionType()).containsExactly(com.ptit.poker.game.domain.betting.PokerActionType.FOLD);
     }
@@ -141,7 +151,7 @@ class GameWebSocketStompMySqlIntegrationTests {
         Fixture fixture=fixture();GameRuntimeView started=runtime.startGame(fixture.roomId());
         GameRuntimeView matched=runtime.applyAction(started.gameId(),started.currentTurnUserId(),new GameActionIntent(
                 started.turnId(),UUID.randomUUID(),com.ptit.poker.game.domain.betting.PokerActionType.CALL,0));
-        Handler handler=new Handler();StompSession session=connect(fixture.second(),handler);QueueFrames publicFrames=new QueueFrames();
+        Handler handler=new Handler();StompSession session=connect(fixture.second(),handler);QueueFrames publicFrames=new QueueFrames(matched);
         subscribe(session,"/topic/game/"+matched.gameId(),publicFrames);realtime.announceStartedGame(matched);
         await(publicFrames,GameEventType.TIMER_UPDATE);JsonNode action=await(publicFrames,GameEventType.PLAYER_ACTION);
         assertThat(action.at("/payload/actionType").asText()).isEqualTo("CHECK");assertThat(action.at("/payload/automatic").asBoolean()).isTrue();
@@ -159,10 +169,23 @@ class GameWebSocketStompMySqlIntegrationTests {
     private record Fixture(long roomId,UserEntity first,UserEntity second){}
 
     private JsonNode await(QueueFrames frames,GameEventType type)throws Exception{
-        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(8);
-        while(true){long remaining=deadline-System.nanoTime();if(remaining<=0)throw new AssertionError("Timed out waiting for "+type);
-            byte[] payload=frames.poll(remaining,TimeUnit.NANOSECONDS);if(payload==null)throw new AssertionError("Timed out waiting for "+type);
-            JsonNode node=json.readTree(payload);if(type.name().equals(node.path("type").asText()))return node;}
+        return await(frames,type,node->true);
+    }
+    private JsonNode await(QueueFrames frames,GameEventType type,Predicate<JsonNode> identity)throws Exception{
+        return frames.await(type,identity,15,TimeUnit.SECONDS);
+    }
+    private JsonNode awaitSecondHandStarted(QueueFrames frames,GameRuntimeView first,GameRuntimeView expected)throws Exception{
+        try{return await(frames,GameEventType.HAND_STARTED,node->node.at("/payload/handNumber").asLong()==2);}
+        catch(AssertionError failure){throw secondHandTimeout(frames,first,expected);}
+    }
+    private AssertionError secondHandTimeout(QueueFrames frames,GameRuntimeView first,GameRuntimeView expected){
+        GameRuntimeView current=runtime.currentView(first.gameId());
+        long persisted=hands.findAllByGameSessionIdOrderByHandNumber(first.gameSessionId()).size();
+        return new AssertionError("Timed out waiting for hand 2 HAND_STARTED: gameId="+first.gameId()
+                +", sessionId="+first.gameSessionId()+", hand1Id="+first.handId()+", expectedHand2Id="+expected.handId()
+                +", runtimeHandId="+current.handId()+", runtimeHandNumber="+current.handNumber()
+                +", handCompleted="+current.handCompleted()+", sessionFinished="+current.sessionFinished()
+                +", persistedHands="+persisted+", capturedTypes="+frames.types());
     }
     private StompSession connect(UserEntity user,Handler handler)throws Exception{
         StompHeaders headers=new StompHeaders();headers.add(HttpHeaders.AUTHORIZATION,"Bearer "+jwt.createAccessToken(user));
@@ -183,9 +206,36 @@ class GameWebSocketStompMySqlIntegrationTests {
         catch(MessageDeliveryException failure){if(!closed(failure))throw failure;}}
     private static boolean closed(Throwable failure){for(Throwable current=failure;current!=null&&current.getCause()!=current;current=current.getCause())
         if(current instanceof IllegalStateException state&&state.getMessage()!=null&&state.getMessage().toLowerCase(Locale.ROOT).contains("closed"))return true;return false;}
-    private static final class QueueFrames implements StompFrameHandler{
-        private final BlockingQueue<byte[]> frames=new LinkedBlockingQueue<>();public Type getPayloadType(StompHeaders headers){return byte[].class;}
-        public void handleFrame(StompHeaders headers,Object payload){frames.add((byte[])payload);}byte[] poll(long time,TimeUnit unit)throws InterruptedException{return frames.poll(time,unit);}}
+    private final class QueueFrames implements StompFrameHandler{
+        private final Object monitor=new Object();private final List<JsonNode> history=new ArrayList<>();
+        private final Set<Integer> consumed=new HashSet<>();private final GameRuntimeView expected;
+        private QueueFrames(GameRuntimeView expected){this.expected=expected;}
+        public Type getPayloadType(StompHeaders headers){return byte[].class;}
+        public void handleFrame(StompHeaders headers,Object payload){synchronized(monitor){try{history.add(json.readTree((byte[])payload));}
+            catch(Exception failure){throw new IllegalStateException("Invalid STOMP JSON",failure);}monitor.notifyAll();}}
+        JsonNode await(GameEventType type,Predicate<JsonNode> identity,long time,TimeUnit unit)throws InterruptedException{
+            long deadline=System.nanoTime()+unit.toNanos(time);synchronized(monitor){while(true){
+                for(int index=0;index<history.size();index++)if(!consumed.contains(index)){
+                    JsonNode node=history.get(index);if(type.name().equals(node.path("type").asText())&&identity.test(node)){
+                        consumed.add(index);return node;}}
+                long remaining=deadline-System.nanoTime();if(remaining<=0)throw timeout(type);
+                TimeUnit.NANOSECONDS.timedWait(monitor,remaining);}}}
+        JsonNode poll(long time,TimeUnit unit)throws InterruptedException{try{return awaitAny(time,unit);}catch(AssertionError ignored){return null;}}
+        private JsonNode awaitAny(long time,TimeUnit unit)throws InterruptedException{long deadline=System.nanoTime()+unit.toNanos(time);
+            synchronized(monitor){while(true){for(int index=0;index<history.size();index++)if(consumed.add(index))return history.get(index);
+                long remaining=deadline-System.nanoTime();if(remaining<=0)throw new AssertionError("No event received");TimeUnit.NANOSECONDS.timedWait(monitor,remaining);}}}
+        void assertOrder(GameEventType...types){synchronized(monitor){int previous=-1;for(GameEventType type:types){int found=-1;
+            for(int index=previous+1;index<history.size();index++)if(type.name().equals(history.get(index).path("type").asText())){found=index;break;}
+            assertThat(found).as("event order "+Arrays.toString(types)+" in "+types()).isGreaterThan(previous);previous=found;}}}
+        List<String> types(){synchronized(monitor){return history.stream().map(node->node.path("type").asText()).toList();}}
+        private AssertionError timeout(GameEventType type){GameRuntimeView current=null;boolean active=true;try{current=runtime.currentView(expected.gameId());}
+            catch(RuntimeException failure){active=false;}long handCount=hands.findAllByGameSessionIdOrderByHandNumber(expected.gameSessionId()).size();
+            long actionCount=actions.countByPokerHandId(expected.handId());boolean result=types().contains(GameEventType.GAME_RESULT.name());
+            return new AssertionError("Timed out waiting for "+type+": gameId="+expected.gameId()+", expectedHandId="+expected.handId()
+                    +", expectedHandNumber="+expected.handNumber()+", activeGamePresent="+active+", runtimeHandId="+(current==null?null:current.handId())
+                    +", runtimeHandNumber="+(current==null?null:current.handNumber())+", handCompleted="+(current==null?null:current.handCompleted())
+                    +", sessionFinished="+(current==null?null:current.sessionFinished())+", currentTurnId="+(current==null?null:current.turnId())
+                    +", persistedHands="+handCount+", playerActions="+actionCount+", gameResultReceived="+result+", capturedTypes="+types());}}
     private static final class Handler extends StompSessionHandlerAdapter{
         private final CompletableFuture<Throwable> failure=new CompletableFuture<>();
         public void handleTransportError(StompSession session,Throwable exception){failure.complete(exception);}

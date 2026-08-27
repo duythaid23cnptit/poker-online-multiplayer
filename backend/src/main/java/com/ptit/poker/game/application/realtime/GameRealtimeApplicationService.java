@@ -12,23 +12,99 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service @Profile("!bootstrap")
 public class GameRealtimeApplicationService {
+    private static final Logger LOGGER=LoggerFactory.getLogger(GameRealtimeApplicationService.class);
     private final GameRuntimeService runtime;
     private final GameRealtimePublisher publisher;
     private final Clock clock;
     private final TurnTimerScheduler timers;
     private final TurnTimerConfiguration timerConfiguration;
+    private final ReconnectGraceScheduler reconnectScheduler;
+    private final ReconnectGraceConfiguration reconnectConfiguration;
     private final ConcurrentHashMap<UUID, ActiveTimer> activeTimers=new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, Object> eventLocks=new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, ActiveGrace> activeGrace=new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, GameRuntimeView> pendingRestorations=new ConcurrentHashMap<>();
+    private final AtomicLong graceGeneration=new AtomicLong();
 
+    @Autowired
     public GameRealtimeApplicationService(GameRuntimeService runtime, GameRealtimePublisher publisher, Clock clock,
-                                          TurnTimerScheduler timers, TurnTimerConfiguration timerConfiguration) {
+                                          TurnTimerScheduler timers, TurnTimerConfiguration timerConfiguration,
+                                          ReconnectGraceScheduler reconnectScheduler,
+                                          ReconnectGraceConfiguration reconnectConfiguration) {
         this.runtime = runtime; this.publisher = publisher; this.clock = clock;
         this.timers=timers; this.timerConfiguration=timerConfiguration;
+        this.reconnectScheduler=reconnectScheduler; this.reconnectConfiguration=reconnectConfiguration;
+    }
+
+    GameRealtimeApplicationService(GameRuntimeService runtime, GameRealtimePublisher publisher, Clock clock,
+                                   TurnTimerScheduler timers, TurnTimerConfiguration timerConfiguration) {
+        this(runtime,publisher,clock,timers,timerConfiguration,(deadline,task)->()->{},
+                new ReconnectGraceConfiguration(Duration.ofSeconds(60)));
+    }
+
+    public void onLastDisconnect(long userId) {
+        runtime.disconnect(userId).ifPresent(transition -> {
+            GameRuntimeView view=transition.view();
+            synchronized(eventLock(view.gameId())) {
+                logTimerState("last-session-disconnect",view.gameId());
+                long generation=graceGeneration.incrementAndGet();
+                Instant deadline=clock.instant().plus(reconnectConfiguration.grace());
+                ReconnectGraceScheduler.Cancellable handle=reconnectScheduler.schedule(deadline,
+                        ()->onGraceExpired(view.gameId(),userId,generation));
+                ActiveGrace old=activeGrace.put(userId,new ActiveGrace(view.gameId(),generation,deadline,handle));
+                if(old!=null)old.handle().cancel();
+                publishPublic(view,GameEventType.GAME_STATE_UPDATE,state(view));
+            }
+        });
+    }
+
+    public void onFirstConnection(long userId) {
+        ActiveGrace grace=activeGrace.get(userId);
+        if(grace==null)return;
+        synchronized(eventLock(grace.gameId())) {
+            if(activeGrace.get(userId)!=grace||clock.instant().isAfter(grace.deadline()))return;
+            runtime.reconnect(userId).ifPresent(transition->{
+                if(!activeGrace.remove(userId,grace))return;
+                grace.handle().cancel();
+                pendingRestorations.put(userId,transition.view());
+                publishPublic(transition.view(),GameEventType.GAME_STATE_UPDATE,state(transition.view()));
+            });
+        }
+    }
+
+    public void onPrivateSubscription(long userId) {
+        GameRuntimeView view=pendingRestorations.remove(userId);
+        if(view!=null)restorePrivate(view,userId);
+    }
+
+    private void onGraceExpired(UUID gameId,long userId,long generation) {
+        synchronized(eventLock(gameId)) {
+            ActiveGrace grace=activeGrace.get(userId);
+            if(grace==null||grace.generation()!=generation||!grace.gameId().equals(gameId))return;
+            if(runtime.expireReconnect(gameId,userId))activeGrace.remove(userId,grace);
+            logTimerState("reconnect-grace-expired",gameId);
+        }
+    }
+
+    private void restorePrivate(GameRuntimeView view,long userId) {
+        publishPrivate(view,userId,GameEventType.GAME_STATE_UPDATE,state(view));
+        if(view.players().stream().noneMatch(player->player.userId()==userId))return;
+        GamePlayerPrivateView own=runtime.privateView(view.gameId(),userId);
+        if(!own.holeCards().isEmpty())publishPrivate(view,userId,GameEventType.HOLE_CARDS,
+                new HoleCards(view.handId(),own.holeCards()));
+        if(Objects.equals(view.currentTurnUserId(),userId)&&!view.handCompleted())publishTurn(view);
+        ActiveTimer timer=activeTimers.get(view.gameId());
+        if(timer!=null&&timer.handId()==view.handId()&&Objects.equals(timer.turnId(),view.turnId()))
+            publishTimerPrivate(view,userId,timer.deadline());
     }
 
     public GameRuntimeView startGame(long roomId) {
@@ -152,16 +228,29 @@ public class GameRealtimeApplicationService {
         TurnTimerScheduler.Cancellable tickHandle=timers.scheduleAtFixedRate(timerConfiguration.updateCadence(),
                 ()->publishTimerIfCurrent(view.gameId(),expectedHand,expectedTurn,deadline));
         activeTimers.put(view.gameId(),new ActiveTimer(expectedHand,expectedTurn,deadline,deadlineHandle,tickHandle));
+        LOGGER.info("Turn deadline scheduled game={} hand={} turn={} actor={} deadline={} delayMs={} cancelled={} done={}",
+                view.gameId(),expectedHand,expectedTurn,view.currentTurnUserId(),deadline,
+                Math.max(0,Duration.between(clock.instant(),deadline).toMillis()),deadlineHandle.isCancelled(),deadlineHandle.isDone());
         publishTimer(view,deadline);
     }
     private void onDeadline(UUID gameId,long handId,UUID turnId) {
         synchronized(eventLock(gameId)) {
             ActiveTimer active=activeTimers.get(gameId);
-            if(active==null||active.handId()!=handId||!active.turnId().equals(turnId))return;
+            LOGGER.info("Turn deadline callback entered game={} hand={} turn={} activePresent={} activeCancelled={} activeDone={}",
+                    gameId,handId,turnId,active!=null,active!=null&&active.deadlineHandle().isCancelled(),
+                    active!=null&&active.deadlineHandle().isDone());
+            if(active==null){LOGGER.info("Turn deadline ignored reason=NO_ACTIVE_TIMER game={} hand={} turn={}",gameId,handId,turnId);return;}
+            if(active.handId()!=handId){LOGGER.info("Turn deadline ignored reason=HAND_MISMATCH game={} expectedHand={} activeHand={}",gameId,handId,active.handId());return;}
+            if(!active.turnId().equals(turnId)){LOGGER.info("Turn deadline ignored reason=TURN_MISMATCH game={} expectedTurn={} activeTurn={}",gameId,turnId,active.turnId());return;}
+            if(active.deadlineHandle().isCancelled()){LOGGER.info("Turn deadline ignored reason=CANCELLED game={} hand={} turn={}",gameId,handId,turnId);return;}
             try {
+                LOGGER.info("Calling authoritative turn timeout game={} hand={} turn={}",gameId,handId,turnId);
                 runtime.handleTurnTimeout(gameId,handId,turnId)
                         .ifPresent(outcome->{publishAccepted(outcome);replaceTimer(outcome.after());});
-            } catch(RuntimeException failure) { cancelTimer(gameId); }
+            } catch(RuntimeException failure) {
+                LOGGER.error("Authoritative turn timeout failed for game {} hand {} turn {}",gameId,handId,turnId,failure);
+                cancelTimer(gameId);
+            }
         }
     }
     private void publishTimerIfCurrent(UUID gameId,long handId,UUID turnId,Instant deadline) {
@@ -183,10 +272,25 @@ public class GameRealtimeApplicationService {
         long remaining=Math.max(0,(Duration.between(clock.instant(),deadline).toMillis()+999)/1000);
         publishPublic(current,GameEventType.TIMER_UPDATE,new Timer(current.handId(),current.turnId(),seat,remaining,deadline));
     }
-    private void cancelTimer(UUID gameId) {
-        ActiveTimer old=activeTimers.remove(gameId);if(old!=null){old.deadlineHandle().cancel();old.tickHandle().cancel();}
+    private void publishTimerPrivate(GameRuntimeView current,long userId,Instant deadline) {
+        int seat=current.players().stream().filter(player->player.userId()==current.currentTurnUserId())
+                .mapToInt(GameRuntimeView.PlayerView::seat).findFirst().orElseThrow();
+        long remaining=Math.max(0,(Duration.between(clock.instant(),deadline).toMillis()+999)/1000);
+        publishPrivate(current,userId,GameEventType.TIMER_UPDATE,
+                new Timer(current.handId(),current.turnId(),seat,remaining,deadline));
     }
+    private void cancelTimer(UUID gameId) {
+        ActiveTimer old=activeTimers.remove(gameId);if(old!=null){
+            LOGGER.info("Turn deadline cancelled game={} hand={} turn={} deadline={} alreadyCancelled={} alreadyDone={}",
+                    gameId,old.handId(),old.turnId(),old.deadline(),old.deadlineHandle().isCancelled(),old.deadlineHandle().isDone());
+            old.deadlineHandle().cancel();old.tickHandle().cancel();}
+    }
+    private void logTimerState(String stage,UUID gameId){ActiveTimer timer=activeTimers.get(gameId);
+        LOGGER.info("Turn deadline state stage={} game={} present={} hand={} turn={} deadline={} cancelled={} done={}",stage,gameId,
+                timer!=null,timer==null?null:timer.handId(),timer==null?null:timer.turnId(),timer==null?null:timer.deadline(),
+                timer!=null&&timer.deadlineHandle().isCancelled(),timer!=null&&timer.deadlineHandle().isDone());}
     private Object eventLock(UUID gameId){return eventLocks.computeIfAbsent(gameId,ignored->new Object());}
     private record ActiveTimer(long handId,UUID turnId,Instant deadline,TurnTimerScheduler.Cancellable deadlineHandle,
                                TurnTimerScheduler.Cancellable tickHandle) {}
+    private record ActiveGrace(UUID gameId,long generation,Instant deadline,ReconnectGraceScheduler.Cancellable handle) {}
 }

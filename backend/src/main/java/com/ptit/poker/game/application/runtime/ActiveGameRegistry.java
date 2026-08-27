@@ -1,6 +1,7 @@
 package com.ptit.poker.game.application.runtime;
 
 import java.util.UUID;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 
@@ -18,4 +19,11 @@ class ActiveGameRegistry {
         return value;
     }
     void remove(ActiveGameContext context) { byId.remove(context.gameId, context); byRoom.remove(context.roomId, context.gameId); }
+    Optional<ActiveGameContext> findByUser(long userId) {
+        return byId.values().stream().filter(context -> {
+            context.lock.lock();
+            try { return context.sessionMemberUserIds.contains(userId); }
+            finally { context.lock.unlock(); }
+        }).findFirst();
+    }
 }

@@ -59,8 +59,17 @@ public final class PokerRoundEngine {
 
     /** Returns Phase 5D legal actions constrained by this betting round's raise rights. */
     public LegalActions legalActions(GameState gameState, BettingRoundState roundState, long userId) {
+        return legalActions(gameState,roundState,userId,false);
+    }
+
+    public LegalActions legalActionsForAutomaticAction(GameState gameState,BettingRoundState roundState,long userId) {
+        return legalActions(gameState,roundState,userId,true);
+    }
+
+    private LegalActions legalActions(GameState gameState,BettingRoundState roundState,long userId,boolean automatic) {
         validateRoundMatchesState(gameState, roundState);
-        LegalActions base = bettingEngine.legalActions(gameState, userId);
+        LegalActions base = automatic ? bettingEngine.legalActionsForAutomaticAction(gameState,userId)
+                : bettingEngine.legalActions(gameState,userId);
         if (base.actions().isEmpty() || !roundState.needsResponse(userId)) {
             return LegalActions.none();
         }
@@ -85,13 +94,24 @@ public final class PokerRoundEngine {
             BettingRoundState roundState,
             BettingAction action,
             Deck deck) {
+        return act(gameState,roundState,action,deck,false);
+    }
+
+    public RoundTransitionResult actAutomaticAction(GameState gameState,BettingRoundState roundState,
+                                                     BettingAction action,Deck deck) {
+        return act(gameState,roundState,action,deck,true);
+    }
+
+    private RoundTransitionResult act(GameState gameState,BettingRoundState roundState,BettingAction action,Deck deck,
+                                      boolean automatic) {
         Objects.requireNonNull(action, "action must not be null");
         Objects.requireNonNull(deck, "deck must not be null");
         validateRoundMatchesState(gameState, roundState);
         if (!roundState.needsResponse(action.userId())) {
             throw new BettingRuleViolationException("player does not currently need a betting response");
         }
-        LegalActions contextualActions = legalActions(gameState, roundState, action.userId());
+        LegalActions contextualActions = automatic ? legalActionsForAutomaticAction(gameState,roundState,action.userId())
+                : legalActions(gameState,roundState,action.userId());
         if (!contextualActions.allows(action.type())) {
             throw new BettingRuleViolationException(action.type() + " is closed by betting-round state");
         }
@@ -99,7 +119,8 @@ public final class PokerRoundEngine {
         long previousGameBet = gameState.currentBet();
         Long previousActor = gameState.currentTurnUserId();
         int previousActorSeat = gameState.requirePlayer(action.userId()).seatNumber();
-        BettingResult bettingResult = bettingEngine.apply(gameState, action);
+        BettingResult bettingResult = automatic ? bettingEngine.applyAutomaticAction(gameState,action)
+                : bettingEngine.apply(gameState,action);
 
         Set<Long> actionable = actionablePlayerIds(gameState);
         if (bettingResult.fullRaise()) {

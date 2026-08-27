@@ -83,6 +83,16 @@ public class RoomPlayerEntity {
         playerState = RoomPlayerState.PLAYING;
     }
 
+    public void markDisconnected() {
+        if (leftAt != null) throw new IllegalStateException("inactive member cannot disconnect");
+        playerState = RoomPlayerState.DISCONNECTED;
+    }
+
+    public void markReconnected() {
+        if (leftAt != null || seatNumber == null) throw new IllegalStateException("only an active seated player can reconnect to gameplay");
+        playerState = RoomPlayerState.PLAYING;
+    }
+
     public void synchronizeTableChips(long chips) {
         if (chips < 0) throw new IllegalArgumentException("table chips must not be negative");
         tableChips = chips;

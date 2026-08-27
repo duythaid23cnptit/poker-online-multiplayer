@@ -29,6 +29,7 @@ poker:
   game:
     turn-timeout: ${POKER_GAME_TURN_TIMEOUT:30s}
     timer-update-cadence: ${POKER_GAME_TIMER_UPDATE_CADENCE:1s}
+    reconnect-grace: ${POKER_GAME_RECONNECT_GRACE:60s}
 
 ---
 spring:

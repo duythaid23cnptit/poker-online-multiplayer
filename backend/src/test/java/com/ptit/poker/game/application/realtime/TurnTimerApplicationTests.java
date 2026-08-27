@@ -51,7 +51,9 @@ class TurnTimerApplicationTests {
         stubStart(start);service.startGame(9);publisher.events.clear();
         when(runtime.handleTurnTimeout(game,30,old)).thenReturn(Optional.of(new GameActionOutcome(start,after,1,1,
                 PokerActionType.FOLD,0,0,900,null,null,true)));
+        assertThat(scheduler.entries.get(0).isDone()).isFalse();
         scheduler.deadline(0).run();
+        verify(runtime).handleTurnTimeout(game,30,old);
         assertThat(publisher.events).filteredOn(e->e.type()==GameEventType.PLAYER_ACTION).singleElement()
                 .satisfies(e->assertThat(((com.ptit.poker.game.api.realtime.GameEventPayloads.PlayerAction)e.payload()).automatic()).isTrue());
         assertThat(scheduler.entries).hasSize(4);
@@ -89,7 +91,7 @@ class TurnTimerApplicationTests {
         public Cancellable schedule(Instant deadline,Runnable task){Entry e=new Entry(task);entries.add(e);return e;}
         public Cancellable scheduleAtFixedRate(Duration cadence,Runnable task){Entry e=new Entry(task);entries.add(e);return e;}
         Runnable deadline(int pair){return entries.get(pair).task;}static final class Entry implements Cancellable{final Runnable task;boolean cancelled;Entry(Runnable task){this.task=task;}
-            public void cancel(){cancelled=true;}boolean cancelled(){return cancelled;}}}
+            public void cancel(){cancelled=true;}public boolean isCancelled(){return cancelled;}public boolean isDone(){return false;}boolean cancelled(){return cancelled;}}}
     private static final class MutableClock extends Clock{private Instant instant;MutableClock(Instant value){instant=value;}
         public ZoneId getZone(){return ZoneOffset.UTC;}public Clock withZone(ZoneId zone){return this;}public Instant instant(){return instant;}}
 }

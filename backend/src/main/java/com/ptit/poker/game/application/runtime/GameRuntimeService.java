@@ -13,11 +13,14 @@ import com.ptit.poker.game.domain.state.*;
 import com.ptit.poker.room.domain.RoomPlayerState;
 import java.time.Duration;
 import java.util.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
 @Service @Profile("!bootstrap")
 public class GameRuntimeService {
+    private static final Logger LOGGER=LoggerFactory.getLogger(GameRuntimeService.class);
     private final ActiveGameRegistry registry; private final RoomGamePort rooms;
     private final GameSessionPersistenceService sessions; private final HandHistoryPersistenceService history;
     private final DeckFactory decks; private final PokerRoundEngine rounds = new PokerRoundEngine();
@@ -37,6 +40,7 @@ public class GameRuntimeService {
         UUID gameId = UUID.randomUUID();
         GameSessionView session = sessions.startSession(roomId);
         ActiveGameContext context = new ActiveGameContext(gameId, session.id(), roomId);
+        context.sessionMemberUserIds.addAll(eligible.stream().map(RoomGamePort.RoomSeat::userId).toList());
         if (!registry.register(context)) { sessions.abortSession(session.id()); throw new GameRuntimeException("GAME_ALREADY_ACTIVE"); }
         try {
             startHand(context, room, eligible, eligible.getFirst().seatNumber());
@@ -52,6 +56,10 @@ public class GameRuntimeService {
     }
 
     public GameActionOutcome applyActionWithOutcome(UUID gameId, long userId, GameActionIntent intent) {
+        return applyActionWithOutcome(gameId,userId,intent,false);
+    }
+
+    private GameActionOutcome applyActionWithOutcome(UUID gameId,long userId,GameActionIntent intent,boolean automatic) {
         ActiveGameContext context = registry.require(gameId); context.lock.lock();
         try {
             requireMutable(context);
@@ -59,7 +67,9 @@ public class GameRuntimeService {
             BettingAction action = new BettingAction(userId, intent.turnId(), intent.type(), intent.targetCurrentBet());
             GamePhase phase = context.state.phase();
             try {
-                RoundTransitionResult transition = rounds.act(context.state, context.round, action, context.deck);
+                RoundTransitionResult transition = automatic
+                        ? rounds.actAutomaticAction(context.state,context.round,action,context.deck)
+                        : rounds.act(context.state, context.round, action, context.deck);
                 PokerPlayer player = context.state.requirePlayer(userId);
                 history.recordAcceptedAction(context.history.pokerHandId(), new AcceptedActionHistory(userId, phase,
                         transition.bettingResult().actionType(), transition.bettingResult().amountCommitted(),
@@ -112,18 +122,64 @@ public class GameRuntimeService {
         try { return view(context); } finally { context.lock.unlock(); }
     }
 
-    public Optional<GameActionOutcome> handleTurnTimeout(UUID gameId, long expectedHandId, UUID expectedTurnId) {
+    public Optional<GameConnectionTransition> disconnect(long userId) {
+        Optional<ActiveGameContext> found = registry.findByUser(userId);
+        if (found.isEmpty()) return Optional.empty();
+        ActiveGameContext context = found.get(); context.lock.lock();
+        try {
+            PokerPlayer player = context.state.players().stream().filter(value->value.userId()==userId).findFirst().orElse(null);
+            if (player != null && !player.isConnected()) return Optional.empty();
+            rooms.markDisconnected(context.roomId, userId);
+            if(player!=null){player.markDisconnected();context.state.advanceStateVersion();}
+            return Optional.of(new GameConnectionTransition(view(context), userId));
+        } finally { context.lock.unlock(); }
+    }
+
+    public Optional<GameConnectionTransition> reconnect(long userId) {
+        Optional<ActiveGameContext> found = registry.findByUser(userId);
+        if (found.isEmpty()) return Optional.empty();
+        ActiveGameContext context = found.get(); context.lock.lock();
+        try {
+            PokerPlayer player = context.state.players().stream().filter(value->value.userId()==userId).findFirst().orElse(null);
+            if ((player != null && player.isConnected()) || context.reconnectExpiredUsers.contains(userId)) return Optional.empty();
+            rooms.markReconnected(context.roomId, userId);
+            if(player!=null){player.markConnected();context.state.advanceStateVersion();}
+            return Optional.of(new GameConnectionTransition(view(context), userId));
+        } finally { context.lock.unlock(); }
+    }
+
+    public boolean expireReconnect(UUID gameId, long userId) {
         ActiveGameContext context;
-        try { context=registry.require(gameId); } catch(GameRuntimeException ignored){return Optional.empty();}
+        try { context = registry.require(gameId); } catch (GameRuntimeException ignored) { return false; }
         context.lock.lock();
         try {
-            if(context.failed||context.handCompleted||context.sessionFinished||context.history.pokerHandId()!=expectedHandId
-                    ||context.state.currentTurnUserId()==null||!Objects.equals(context.state.turnId(),expectedTurnId))return Optional.empty();
+            PokerPlayer player = context.state.players().stream().filter(value->value.userId()==userId).findFirst().orElse(null);
+            if (player != null && player.isConnected()) return false;
+            boolean added=context.reconnectExpiredUsers.add(userId);
+            if(added&&context.handCompleted)finalizeExpiredAndMaybeFinish(context);
+            return added;
+        } finally { context.lock.unlock(); }
+    }
+
+    public Optional<GameActionOutcome> handleTurnTimeout(UUID gameId, long expectedHandId, UUID expectedTurnId) {
+        LOGGER.info("Authoritative turn timeout entered game={} expectedHand={} expectedTurn={}",gameId,expectedHandId,expectedTurnId);
+        ActiveGameContext context;
+        try { context=registry.require(gameId); } catch(GameRuntimeException ignored){
+            LOGGER.info("Authoritative turn timeout ignored reason=GAME_NOT_FOUND game={} hand={} turn={}",gameId,expectedHandId,expectedTurnId);
+            return Optional.empty();}
+        context.lock.lock();
+        try {
+            if(context.failed){LOGGER.info("Authoritative turn timeout ignored reason=RUNTIME_FAILED game={}",gameId);return Optional.empty();}
+            if(context.handCompleted){LOGGER.info("Authoritative turn timeout ignored reason=HAND_COMPLETED game={}",gameId);return Optional.empty();}
+            if(context.sessionFinished){LOGGER.info("Authoritative turn timeout ignored reason=SESSION_FINISHED game={}",gameId);return Optional.empty();}
+            if(context.history.pokerHandId()!=expectedHandId){LOGGER.info("Authoritative turn timeout ignored reason=HAND_MISMATCH game={}",gameId);return Optional.empty();}
+            if(context.state.currentTurnUserId()==null){LOGGER.info("Authoritative turn timeout ignored reason=NO_CURRENT_ACTOR game={}",gameId);return Optional.empty();}
+            if(!Objects.equals(context.state.turnId(),expectedTurnId)){LOGGER.info("Authoritative turn timeout ignored reason=TURN_MISMATCH game={}",gameId);return Optional.empty();}
             long actor=context.state.currentTurnUserId();
-            LegalActions legal=rounds.legalActions(context.state,context.round,actor);
-            if(legal.actions().isEmpty())return Optional.empty();
+            LegalActions legal=rounds.legalActionsForAutomaticAction(context.state,context.round,actor);
+            if(legal.actions().isEmpty()){LOGGER.info("Authoritative turn timeout ignored reason=NO_AUTOMATIC_ACTION game={} actor={}",gameId,actor);return Optional.empty();}
             PokerActionType type=legal.allows(PokerActionType.CHECK)?PokerActionType.CHECK:PokerActionType.FOLD;
-            return Optional.of(applyActionWithOutcome(gameId,actor,new GameActionIntent(expectedTurnId,null,type,0)));
+            return Optional.of(applyActionWithOutcome(gameId,actor,new GameActionIntent(expectedTurnId,null,type,0),true));
         } finally {context.lock.unlock();}
     }
 
@@ -131,18 +187,55 @@ public class GameRuntimeService {
         ActiveGameContext context = registry.require(gameId); context.lock.lock();
         try {
             if (!context.handCompleted || context.failed || context.sessionFinished) throw new GameRuntimeException("NEXT_HAND_NOT_ALLOWED");
-            List<RoomGamePort.RoomSeat> eligible = context.state.players().stream()
-                    .filter(p -> p.tableChips() > 0 && !p.isLeaving())
-                    .map(p -> new RoomGamePort.RoomSeat(p.userId(), p.seatNumber(), p.tableChips(),
-                            p.isConnected() ? RoomPlayerState.PLAYING : RoomPlayerState.DISCONNECTED)).toList();
+            finalizeExpiredDepartures(context);
+            RoomGamePort.RoomGameSnapshot room=rooms.load(context.roomId);
+            List<RoomGamePort.RoomSeat> sessionSeats=room.seats().stream()
+                    .filter(seat->context.sessionMemberUserIds.contains(seat.userId()))
+                    .map(seat->withAuthoritativeStack(context,seat)).toList();
+            List<RoomGamePort.RoomSeat> eligible=sessionSeats.stream()
+                    .filter(GameRuntimeService::eligibleForNewHand).toList();
             if (eligible.size() < 2) {
+                boolean liveGrace=sessionSeats.stream().anyMatch(seat->seat.state()==RoomPlayerState.DISCONNECTED
+                        &&!context.reconnectExpiredUsers.contains(seat.userId()));
+                if(liveGrace)return view(context);
                 sessions.finishSession(context.sessionId); context.sessionFinished = true; registry.remove(context); return view(context);
             }
             int dealer = nextSeat(eligible, context.state.dealerPosition());
-            startHand(context, rooms.load(context.roomId), eligible, dealer);
+            startHand(context, room, eligible, dealer);
             return view(context);
         } finally { context.lock.unlock(); }
     }
+
+    private void finalizeExpiredAndMaybeFinish(ActiveGameContext context) {
+        finalizeExpiredDepartures(context);
+        RoomGamePort.RoomGameSnapshot room=rooms.load(context.roomId);
+        long continuing=room.seats().stream().filter(seat->context.sessionMemberUserIds.contains(seat.userId()))
+                .filter(GameRuntimeService::eligibleForNewHand).count();
+        boolean liveGrace=room.seats().stream().filter(seat->context.sessionMemberUserIds.contains(seat.userId()))
+                .anyMatch(seat->seat.state()==RoomPlayerState.DISCONNECTED
+                        &&!context.reconnectExpiredUsers.contains(seat.userId()));
+        if(continuing<2&&!liveGrace&&!context.sessionFinished){
+            sessions.finishSession(context.sessionId);context.sessionFinished=true;registry.remove(context);
+        }
+    }
+
+    private void finalizeExpiredDepartures(ActiveGameContext context) {
+        List<Long> expired=context.reconnectExpiredUsers.stream()
+                .filter(context.sessionMemberUserIds::contains).toList();
+        for(long userId:expired){rooms.finalizeActiveGameDeparture(context.roomId,userId);context.sessionMemberUserIds.remove(userId);}
+    }
+
+    private static boolean eligibleForNewHand(RoomGamePort.RoomSeat seat) {
+        return seat.tableChips()>0&&(seat.state()==RoomPlayerState.PLAYING||seat.state()==RoomPlayerState.READY);
+    }
+
+    private static RoomGamePort.RoomSeat withAuthoritativeStack(ActiveGameContext context,RoomGamePort.RoomSeat seat) {
+        return context.state.players().stream().filter(player->player.userId()==seat.userId()).findFirst()
+                .map(player->new RoomGamePort.RoomSeat(seat.userId(),seat.seatNumber(),player.tableChips(),seat.state()))
+                .orElse(seat);
+    }
+
+    public record GameConnectionTransition(GameRuntimeView view, long userId) {}
 
     private void startHand(ActiveGameContext c, RoomGamePort.RoomGameSnapshot room,
                            List<RoomGamePort.RoomSeat> seats, int dealer) {

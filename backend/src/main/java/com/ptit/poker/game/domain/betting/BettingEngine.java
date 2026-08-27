@@ -11,6 +11,14 @@ import java.util.Objects;
 public final class BettingEngine {
 
     public LegalActions legalActions(GameState gameState, long userId) {
+        return legalActions(gameState,userId,true);
+    }
+
+    public LegalActions legalActionsForAutomaticAction(GameState gameState,long userId) {
+        return legalActions(gameState,userId,false);
+    }
+
+    private LegalActions legalActions(GameState gameState,long userId,boolean requireConnection) {
         Objects.requireNonNull(gameState, "gameState must not be null");
         if (gameState.currentTurnUserId() == null || gameState.currentTurnUserId() != userId) {
             return LegalActions.none();
@@ -22,7 +30,7 @@ public final class BettingEngine {
         } catch (IllegalArgumentException exception) {
             return LegalActions.none();
         }
-        if (!player.canAcceptClientBettingAction()) {
+        if (!(requireConnection ? player.canAcceptClientBettingAction() : player.canReceiveBettingTurn())) {
             return LegalActions.none();
         }
 
@@ -53,6 +61,14 @@ public final class BettingEngine {
     }
 
     public BettingResult apply(GameState gameState, BettingAction action) {
+        return apply(gameState,action,true);
+    }
+
+    public BettingResult applyAutomaticAction(GameState gameState,BettingAction action) {
+        return apply(gameState,action,false);
+    }
+
+    private BettingResult apply(GameState gameState,BettingAction action,boolean requireConnection) {
         Objects.requireNonNull(gameState, "gameState must not be null");
         Objects.requireNonNull(action, "action must not be null");
         validateTurn(gameState, action);
@@ -66,7 +82,7 @@ public final class BettingEngine {
         } catch (IllegalArgumentException exception) {
             throw new BettingRuleViolationException("action user is not a player in the game");
         }
-        LegalActions legalActions = legalActions(gameState, action.userId());
+        LegalActions legalActions = legalActions(gameState,action.userId(),requireConnection);
         if (!legalActions.allows(action.type())) {
             throw new BettingRuleViolationException(action.type() + " is not legal for the current state");
         }

@@ -5,6 +5,7 @@ import com.ptit.poker.game.application.AcceptedActionHistory;
 import com.ptit.poker.game.domain.betting.PokerActionType;
 import com.ptit.poker.game.domain.card.Deck;
 import com.ptit.poker.game.domain.state.GameState;
+import com.ptit.poker.game.domain.state.PokerPlayerState;
 import com.ptit.poker.game.domain.settlement.HandSettlementResult;
 import com.ptit.poker.game.infrastructure.persistence.GameSessionStatus;
 import com.ptit.poker.room.domain.RoomPlayerState;
@@ -404,6 +405,81 @@ class GameRuntimeServiceTests {
             assertThat(ready.await(2,TimeUnit.SECONDS)).isTrue();go.countDown();player.get();timer.get();
         }
         verify(history,times(1)).recordAcceptedAction(anyLong(),any());
+    }
+
+    @Test
+    void disconnectAndReconnectPreserveActiveParticipationAndCommittedChips() {
+        GameRuntimeView started=startHeadsUp(94);
+        long committed=started.players().stream().filter(player->player.userId()==1).findFirst().orElseThrow().totalCommitted();
+        GameRuntimeView disconnected=service.disconnect(1).orElseThrow().view();
+        var player=disconnected.players().stream().filter(value->value.userId()==1).findFirst().orElseThrow();
+        assertThat(player.participation()).isEqualTo(PokerPlayerState.ACTIVE);
+        assertThat(player.connected()).isFalse();assertThat(player.totalCommitted()).isEqualTo(committed);
+        assertThat(service.reconnect(1).orElseThrow().view().players().stream()
+                .filter(value->value.userId()==1).findFirst().orElseThrow().connected()).isTrue();
+        verify(rooms).markDisconnected(94,1);verify(rooms).markReconnected(94,1);
+    }
+
+    @Test
+    void allInDisconnectPreservesAllInParticipation() {
+        when(rooms.load(95)).thenReturn(new RoomGamePort.RoomGameSnapshot(95,50,100,
+                List.of(seat(1,1,200),seat(2,2,1_000),seat(3,3,1_000))));
+        GameRuntimeView started=service.startGame(95);
+        service.applyAction(started.gameId(),1,intent(started,PokerActionType.ALL_IN,0));
+        var player=service.disconnect(1).orElseThrow().view().players().stream()
+                .filter(value->value.userId()==1).findFirst().orElseThrow();
+        assertThat(player.participation()).isEqualTo(PokerPlayerState.ALL_IN);
+        assertThat(player.connected()).isFalse();assertThat(player.totalCommitted()).isEqualTo(200);
+    }
+
+    @Test
+    void graceExpiredDisconnectedPlayerIsExcludedFromNextHand() {
+        GameRuntimeView started=startHeadsUp(96);
+        GameRuntimeView completed=service.applyAction(started.gameId(),started.currentTurnUserId(),
+                intent(started,PokerActionType.FOLD,0));
+        service.disconnect(1);assertThat(service.expireReconnect(started.gameId(),1)).isTrue();
+        verify(rooms).finalizeActiveGameDeparture(96,1);
+        verify(sessions).finishSession(completed.gameSessionId());
+        assertThatThrownBy(()->service.currentView(completed.gameId())).isInstanceOf(GameRuntimeException.class);
+    }
+
+    @Test
+    void completedHeadsUpHandWaitsForLiveGraceAndReconnectKeepsSameSession() {
+        GameRuntimeView started=startHeadsUp(97);
+        long sessionId=started.gameSessionId();service.disconnect(2);
+        GameRuntimeView completed=service.applyAction(started.gameId(),started.currentTurnUserId(),
+                intent(started,PokerActionType.FOLD,0));
+        when(rooms.load(97)).thenReturn(new RoomGamePort.RoomGameSnapshot(97,50,100,List.of(
+                new RoomGamePort.RoomSeat(1,1,completed.players().stream().filter(p->p.userId()==1).findFirst().orElseThrow().tableChips(),RoomPlayerState.PLAYING),
+                new RoomGamePort.RoomSeat(2,2,completed.players().stream().filter(p->p.userId()==2).findFirst().orElseThrow().tableChips(),RoomPlayerState.DISCONNECTED))));
+        GameRuntimeView waiting=service.startNextHand(started.gameId());
+        assertThat(waiting.handNumber()).isOne();assertThat(waiting.sessionFinished()).isFalse();
+        verify(sessions,never()).finishSession(sessionId);verify(rooms,never()).finalizeActiveGameDeparture(97,2);
+
+        service.reconnect(2);
+        when(rooms.load(97)).thenReturn(new RoomGamePort.RoomGameSnapshot(97,50,100,List.of(
+                new RoomGamePort.RoomSeat(1,1,1_000,RoomPlayerState.PLAYING),
+                new RoomGamePort.RoomSeat(2,2,1_000,RoomPlayerState.PLAYING))));
+        GameRuntimeView next=service.startNextHand(started.gameId());
+        assertThat(next.gameSessionId()).isEqualTo(sessionId);assertThat(next.handNumber()).isEqualTo(2);
+        verify(sessions,times(1)).startSession(97);
+    }
+
+    @Test
+    void threePlayerNextHandExcludesDisconnectedMemberButRetainsReconnectability() {
+        when(rooms.load(98)).thenReturn(new RoomGamePort.RoomGameSnapshot(98,50,100,List.of(
+                seat(1,1,1_000),seat(2,2,1_000),seat(3,3,1_000))));
+        GameRuntimeView view=service.startGame(98);service.disconnect(3);
+        while(!view.handCompleted())view=service.applyAction(view.gameId(),view.currentTurnUserId(),intent(view,PokerActionType.FOLD,0));
+        when(rooms.load(98)).thenReturn(new RoomGamePort.RoomGameSnapshot(98,50,100,List.of(
+                new RoomGamePort.RoomSeat(1,1,1_000,RoomPlayerState.PLAYING),
+                new RoomGamePort.RoomSeat(2,2,1_000,RoomPlayerState.PLAYING),
+                new RoomGamePort.RoomSeat(3,3,1_000,RoomPlayerState.DISCONNECTED))));
+        GameRuntimeView next=service.startNextHand(view.gameId());
+        assertThat(next.players()).extracting(GameRuntimeView.PlayerView::userId).containsExactly(1L,2L);
+        assertThat(service.reconnect(3)).isPresent();
+        assertThat(service.currentView(next.gameId()).players()).extracting(GameRuntimeView.PlayerView::userId)
+                .doesNotContain(3L);
     }
 
     private static void await(CountDownLatch latch){try{latch.await();}catch(InterruptedException failure){Thread.currentThread().interrupt();throw new AssertionError(failure);}}
