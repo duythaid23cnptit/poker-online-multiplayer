@@ -48,9 +48,14 @@ public class GameRuntimeService {
     }
 
     public GameRuntimeView applyAction(UUID gameId, long userId, GameActionIntent intent) {
+        return applyActionWithOutcome(gameId, userId, intent).after();
+    }
+
+    public GameActionOutcome applyActionWithOutcome(UUID gameId, long userId, GameActionIntent intent) {
         ActiveGameContext context = registry.require(gameId); context.lock.lock();
         try {
             requireMutable(context);
+            GameRuntimeView before = view(context);
             BettingAction action = new BettingAction(userId, intent.turnId(), intent.type(), intent.targetCurrentBet());
             GamePhase phase = context.state.phase();
             try {
@@ -60,13 +65,50 @@ public class GameRuntimeService {
                         transition.bettingResult().actionType(), transition.bettingResult().amountCommitted(),
                         transition.bettingResult().resultingCurrentBet(), context.state.currentBet(), player.tableChips(),
                         intent.turnId(), intent.clientActionId()));
-                if (transition.handDecidedByFold() || context.state.phase() == GamePhase.SHOWDOWN) complete(context);
-                return view(context);
+                HandSettlementResult settlement = null;
+                if (transition.handDecidedByFold() || context.state.phase() == GamePhase.SHOWDOWN) settlement = complete(context);
+                return new GameActionOutcome(before, view(context), userId, player.seatNumber(),
+                        transition.bettingResult().actionType(), transition.bettingResult().amountCommitted(),
+                        transition.bettingResult().resultingCurrentBet(), player.tableChips(), intent.clientActionId(), settlement);
             } catch (RuntimeException failure) {
                 if (!(failure instanceof BettingRuleViolationException)) context.failed = true;
                 throw failure;
             }
         } finally { context.lock.unlock(); }
+    }
+
+    public GamePlayerPrivateView privateView(UUID gameId, long userId) {
+        ActiveGameContext context = registry.require(gameId); context.lock.lock();
+        try {
+            PokerPlayer player = context.state.requirePlayer(userId);
+            LegalActions legal = context.handCompleted || context.state.currentTurnUserId() == null
+                    ? LegalActions.none() : rounds.legalActions(context.state, context.round, userId);
+            return new GamePlayerPrivateView(userId, context.history.pokerHandId(), gameId, context.state.turnId(),
+                    context.state.stateVersion(), player.holeCards(), legal, player.tableChips());
+        } finally { context.lock.unlock(); }
+    }
+
+    public boolean canObserve(UUID gameId, long userId) {
+        ActiveGameContext context;
+        try { context = registry.require(gameId); } catch (GameRuntimeException ignored) { return false; }
+        context.lock.lock();
+        try {
+            if (context.state.players().stream().anyMatch(player -> player.userId() == userId)) return true;
+            return rooms.canObserve(context.roomId, userId);
+        } finally { context.lock.unlock(); }
+    }
+
+    public boolean isParticipant(UUID gameId, long userId) {
+        ActiveGameContext context;
+        try { context = registry.require(gameId); } catch (GameRuntimeException ignored) { return false; }
+        context.lock.lock();
+        try { return context.state.players().stream().anyMatch(player -> player.userId() == userId); }
+        finally { context.lock.unlock(); }
+    }
+
+    public GameRuntimeView currentView(UUID gameId) {
+        ActiveGameContext context = registry.require(gameId); context.lock.lock();
+        try { return view(context); } finally { context.lock.unlock(); }
     }
 
     public GameRuntimeView startNextHand(UUID gameId) {
@@ -100,7 +142,7 @@ public class GameRuntimeService {
         long currentBet = players.stream().mapToLong(PokerPlayer::currentBet).max().orElse(0);
         GameState state = new GameState(c.gameId, UUID.randomUUID(), GamePhase.PRE_FLOP, dealer, sb, bb,
                 null, currentBet, room.bigBlind(), List.of(), players, Duration.ZERO, 0, null, room.bigBlind());
-        c.handNumber++; c.state = state; c.deck = deck;
+        c.handNumber++; c.smallBlind = room.smallBlind(); c.bigBlind = room.bigBlind(); c.state = state; c.deck = deck;
         boolean automaticRunout = players.stream().filter(PokerPlayer::canReceiveBettingTurn).count() <= 1;
         if (automaticRunout) {
             c.history = history.startHand(c.sessionId, c.handNumber, room.smallBlind(), room.bigBlind(), state);
@@ -113,7 +155,7 @@ public class GameRuntimeService {
         if (state.phase() == GamePhase.SHOWDOWN || state.phase() == GamePhase.FINISHED) complete(c);
     }
 
-    private void complete(ActiveGameContext c) {
+    private HandSettlementResult complete(ActiveGameContext c) {
         HandSettlementResult result = c.state.phase() == GamePhase.FINISHED
                 ? settlements.settleByFolds(c.state) : settlements.settleShowdown(c.state);
         history.completeHand(c.history, c.state, result,
@@ -121,6 +163,7 @@ public class GameRuntimeService {
         rooms.synchronizeTableChips(c.roomId, c.state.players().stream()
                 .map(p -> new RoomGamePort.PlayerStack(p.userId(), p.tableChips())).toList());
         c.handCompleted = true;
+        return result;
     }
 
     private static void postBlind(List<PokerPlayer> players, int seat, long blind) {
@@ -141,9 +184,10 @@ public class GameRuntimeService {
         if (c.handCompleted || c.sessionFinished) throw new GameRuntimeException("HAND_NOT_ACTIVE");
     }
     private static GameRuntimeView view(ActiveGameContext c) {
-        return new GameRuntimeView(c.gameId, c.sessionId, c.roomId, c.handNumber, c.state.dealerPosition(),
+        return new GameRuntimeView(c.gameId, c.sessionId, c.roomId, c.history.pokerHandId(), c.handNumber, c.state.dealerPosition(),
                 c.state.smallBlindPosition(), c.state.bigBlindPosition(), c.state.phase(), c.state.currentTurnUserId(),
-                c.state.turnId(), c.state.currentBet(), c.state.communityCards(),
+                c.state.turnId(), c.state.stateVersion(), c.state.currentBet(), c.state.minimumRaise(),
+                c.smallBlind, c.bigBlind, c.state.communityCards(),
                 c.state.players().stream().map(p -> new GameRuntimeView.PlayerView(p.userId(),
                 p.seatNumber(), p.tableChips(), p.currentBet(), p.totalCommitted(), p.playerState(),
                 p.holeCards().size(), p.isConnected(), p.isLeaving())).toList(),

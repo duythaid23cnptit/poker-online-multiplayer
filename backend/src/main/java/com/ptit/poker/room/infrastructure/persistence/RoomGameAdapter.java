@@ -30,6 +30,10 @@ public class RoomGameAdapter implements RoomGamePort {
     public void synchronizeTableChips(long roomId, List<PlayerStack> stacks) {
         for (PlayerStack stack : stacks) require(roomId, stack.userId()).synchronizeTableChips(stack.tableChips());
     }
+    @Override @Transactional(readOnly = true)
+    public boolean canObserve(long roomId, long userId) {
+        return players.findByRoomIdAndUserId(roomId, userId).filter(RoomPlayerEntity::isActive).isPresent();
+    }
     private RoomPlayerEntity require(long roomId, long userId) {
         return players.findByRoomIdAndUserIdForUpdate(roomId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("room player not found"));

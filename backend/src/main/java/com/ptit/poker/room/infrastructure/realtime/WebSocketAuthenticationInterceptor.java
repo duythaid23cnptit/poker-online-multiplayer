@@ -6,6 +6,8 @@ import com.ptit.poker.auth.infrastructure.persistence.UserRepository;
 import com.ptit.poker.auth.infrastructure.security.AuthenticatedUser;
 import com.ptit.poker.auth.infrastructure.security.JwtService;
 import com.ptit.poker.room.application.RoomApplicationService;
+import com.ptit.poker.game.application.runtime.GameRuntimeService;
+import java.util.UUID;
 import org.springframework.messaging.Message;
 import org.springframework.context.annotation.Profile;
 import org.springframework.messaging.MessageChannel;
@@ -25,9 +27,11 @@ public class WebSocketAuthenticationInterceptor implements ChannelInterceptor {
     private final JwtService jwt;
     private final UserRepository users;
     private final RoomApplicationService rooms;
+    private final GameRuntimeService games;
 
-    public WebSocketAuthenticationInterceptor(JwtService jwt, UserRepository users, RoomApplicationService rooms) {
-        this.jwt = jwt; this.users = users; this.rooms = rooms;
+    public WebSocketAuthenticationInterceptor(JwtService jwt, UserRepository users, RoomApplicationService rooms,
+                                              GameRuntimeService games) {
+        this.jwt = jwt; this.users = users; this.rooms = rooms; this.games = games;
     }
 
     @Override
@@ -62,11 +66,19 @@ public class WebSocketAuthenticationInterceptor implements ChannelInterceptor {
         if (accessor.getUser() == null) throw new IllegalArgumentException("Authentication required");
         String destination = accessor.getDestination();
         if ("/topic/lobby".equals(destination)) return;
+        if ("/user/queue/private".equals(destination)) return;
+        AuthenticatedUser user = (AuthenticatedUser) ((org.springframework.security.core.Authentication) accessor.getUser()).getPrincipal();
+        if (destination != null && destination.startsWith("/topic/game/")) {
+            UUID gameId;
+            try { gameId = UUID.fromString(destination.substring("/topic/game/".length())); }
+            catch (IllegalArgumentException ex) { throw new IllegalArgumentException("Invalid destination"); }
+            if (games.canObserve(gameId, user.userId())) return;
+            throw new IllegalArgumentException("Subscription forbidden");
+        }
         if (destination != null && destination.startsWith("/topic/room/")) {
             Long roomId;
             try { roomId = Long.valueOf(destination.substring("/topic/room/".length())); }
             catch (NumberFormatException ex) { throw new IllegalArgumentException("Invalid destination"); }
-            AuthenticatedUser user = (AuthenticatedUser) ((org.springframework.security.core.Authentication) accessor.getUser()).getPrincipal();
             if (rooms.isActiveMember(roomId, user.userId())) return;
         }
         throw new IllegalArgumentException("Subscription forbidden");

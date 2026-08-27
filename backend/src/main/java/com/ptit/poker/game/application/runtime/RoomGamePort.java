@@ -7,6 +7,7 @@ public interface RoomGamePort {
     RoomGameSnapshot load(long roomId);
     void markPlaying(long roomId, List<Long> userIds);
     void synchronizeTableChips(long roomId, List<PlayerStack> stacks);
+    boolean canObserve(long roomId, long userId);
 
     record RoomGameSnapshot(long roomId, long smallBlind, long bigBlind, List<RoomSeat> seats) {
         public RoomGameSnapshot { seats = List.copyOf(seats); }
