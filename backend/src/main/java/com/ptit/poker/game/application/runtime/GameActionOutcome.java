@@ -7,4 +7,4 @@ import java.util.UUID;
 public record GameActionOutcome(GameRuntimeView before, GameRuntimeView after, long userId, int seat,
                                 PokerActionType actionType, long amountCommitted, long resultingCurrentBet,
                                 long resultingTableChips, UUID clientActionId,
-                                HandSettlementResult settlement) {}
+                                HandSettlementResult settlement, boolean automatic) {}

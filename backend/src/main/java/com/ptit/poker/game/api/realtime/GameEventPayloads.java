@@ -17,7 +17,10 @@ public final class GameEventPayloads {
     public record Turn(long handId, UUID turnId, Set<PokerActionType> legalActions, long callAmount,
                        long minimumTarget, long maximumTarget, long tableChips) { public Turn { legalActions = Set.copyOf(legalActions); } }
     public record PlayerAction(long userId, int seat, PokerActionType actionType, long amount,
-                               long resultingCurrentBet, long resultingTableChips, UUID clientActionId) {}
+                               long resultingCurrentBet, long resultingTableChips, UUID clientActionId,
+                               boolean automatic) {}
+    public record Timer(long handId, UUID turnId, int currentTurnSeat, long remainingSeconds,
+                        java.time.Instant deadline) {}
     public record CommunityCards(GamePhase phase, List<Card> cards) { public CommunityCards { cards = List.copyOf(cards); } }
     public record State(long handId, long handNumber, GamePhase phase, int dealerSeat, int smallBlindSeat,
                         int bigBlindSeat, Long currentTurnUserId, long currentBet, long minimumRaise,

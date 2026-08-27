@@ -362,6 +362,52 @@ class GameRuntimeServiceTests {
         assertThat(next.players()).extracting(GameRuntimeView.PlayerView::userId).doesNotContainAnyElementsOf(busted);
     }
 
+    @Test
+    void timeoutUsesFoldWhenActorOwesChipsAndPersistsAutomaticAction() {
+        GameRuntimeView view=startHeadsUp(90);
+        var outcome=service.handleTurnTimeout(view.gameId(),view.handId(),view.turnId()).orElseThrow();
+        assertThat(outcome.actionType()).isEqualTo(PokerActionType.FOLD);
+        assertThat(outcome.automatic()).isTrue();
+        assertThat(outcome.clientActionId()).isNull();
+        assertThat(outcome.after().handCompleted()).isTrue();
+        verify(history).recordAcceptedAction(eq(20L),argThat(action->action.actionType()==PokerActionType.FOLD
+                && action.clientActionId()==null));
+    }
+
+    @Test
+    void timeoutUsesCheckWhenAuthoritativeLegalActionsAllowIt() {
+        GameRuntimeView view=startHeadsUp(91);
+        view=service.applyAction(view.gameId(),view.currentTurnUserId(),intent(view,PokerActionType.CALL,0));
+        var outcome=service.handleTurnTimeout(view.gameId(),view.handId(),view.turnId()).orElseThrow();
+        assertThat(outcome.actionType()).isEqualTo(PokerActionType.CHECK);
+        assertThat(outcome.automatic()).isTrue();
+        assertThat(outcome.after().phase()).isEqualTo(com.ptit.poker.game.domain.state.GamePhase.FLOP);
+    }
+
+    @Test
+    void staleTurnAndOldHandTimeoutCallbacksAreNoOps() {
+        GameRuntimeView first=startHeadsUp(92); UUID oldTurn=first.turnId(); long oldHand=first.handId();
+        GameRuntimeView completed=service.applyAction(first.gameId(),first.currentTurnUserId(),intent(first,PokerActionType.FOLD,0));
+        assertThat(service.handleTurnTimeout(first.gameId(),oldHand,oldTurn)).isEmpty();
+        GameRuntimeView next=service.startNextHand(completed.gameId());
+        assertThat(service.handleTurnTimeout(next.gameId(),oldHand,oldTurn)).isEmpty();
+        verify(history,times(1)).recordAcceptedAction(anyLong(),any());
+    }
+
+    @Test
+    void realActionAndTimeoutForSameTurnProduceExactlyOneHistoryAction() throws Exception {
+        GameRuntimeView view=startHeadsUp(93); CountDownLatch ready=new CountDownLatch(2),go=new CountDownLatch(1);
+        try(ExecutorService executor=Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<?> player=executor.submit(()->{ready.countDown();await(go);try{service.applyAction(view.gameId(),
+                    view.currentTurnUserId(),intent(view,PokerActionType.FOLD,0));}catch(RuntimeException ignored){}});
+            Future<?> timer=executor.submit(()->{ready.countDown();await(go);service.handleTurnTimeout(view.gameId(),view.handId(),view.turnId());});
+            assertThat(ready.await(2,TimeUnit.SECONDS)).isTrue();go.countDown();player.get();timer.get();
+        }
+        verify(history,times(1)).recordAcceptedAction(anyLong(),any());
+    }
+
+    private static void await(CountDownLatch latch){try{latch.await();}catch(InterruptedException failure){Thread.currentThread().interrupt();throw new AssertionError(failure);}}
+
     private GameRuntimeView checkAround(GameRuntimeView view) {
         view = service.applyAction(view.gameId(), view.currentTurnUserId(), intent(view, PokerActionType.CHECK, 0));
         return service.applyAction(view.gameId(), view.currentTurnUserId(), intent(view, PokerActionType.CHECK, 0));

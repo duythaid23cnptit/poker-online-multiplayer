@@ -20,8 +20,13 @@ class GameRealtimeApplicationServiceTests {
     private final RecordingPublisher publisher = new RecordingPublisher();
     private final UUID gameId = UUID.randomUUID(), turnId = UUID.randomUUID();
     private GameRealtimeApplicationService service;
-    @BeforeEach void setUp() { service = new GameRealtimeApplicationService(runtime, publisher,
-            Clock.fixed(Instant.parse("2026-08-27T00:00:00Z"), ZoneOffset.UTC)); }
+    private final TurnTimerScheduler timers=mock(TurnTimerScheduler.class);
+    @BeforeEach void setUp() {
+        when(timers.schedule(any(),any())).thenReturn(()->{});when(timers.scheduleAtFixedRate(any(),any())).thenReturn(()->{});
+        service = new GameRealtimeApplicationService(runtime, publisher,
+            Clock.fixed(Instant.parse("2026-08-27T00:00:00Z"), ZoneOffset.UTC),timers,
+            new TurnTimerConfiguration(){public Duration turnTimeout(){return Duration.ofSeconds(30);}
+                public Duration updateCadence(){return Duration.ofSeconds(1);}}); }
 
     @Test void startPublishesPublicBeforePrivateAndNeverLeaksHoleCards() {
         GameRuntimeView view = view(GamePhase.PRE_FLOP, List.of(), 7, false, 1L);
@@ -30,7 +35,8 @@ class GameRealtimeApplicationServiceTests {
         when(runtime.privateView(gameId, 2)).thenReturn(privateView(2, List.of(card(Rank.QUEEN), card(Rank.JACK)), false));
         service.startGame(9);
         assertThat(publisher.all).extracting(Sent::type).containsExactly(GameEventType.GAME_STARTED,
-                GameEventType.HAND_STARTED, GameEventType.HOLE_CARDS, GameEventType.HOLE_CARDS, GameEventType.YOUR_TURN);
+                GameEventType.HAND_STARTED, GameEventType.HOLE_CARDS, GameEventType.HOLE_CARDS,
+                GameEventType.YOUR_TURN,GameEventType.TIMER_UPDATE);
         assertThat(publisher.all.get(2).userId()).isEqualTo(1);
         assertThat(publisher.all.get(3).userId()).isEqualTo(2);
         assertThat(publisher.all.get(4).userId()).isEqualTo(1);
@@ -42,11 +48,11 @@ class GameRealtimeApplicationServiceTests {
         GameRuntimeView after = view(GamePhase.PRE_FLOP, List.of(), 9, false, 2L);
         when(runtime.isParticipant(gameId, 1)).thenReturn(true);
         when(runtime.applyActionWithOutcome(eq(gameId), eq(1L), any())).thenReturn(new GameActionOutcome(before, after,
-                1, 1, PokerActionType.CALL, 100, 100, 900, clientId, null));
+                1, 1, PokerActionType.CALL, 100, 100, 900, clientId, null,false));
         when(runtime.privateView(gameId, 2)).thenReturn(privateView(2, List.of(), true));
         service.handleAction(gameId, 1, new GameActionMessage(PokerActionType.CALL, null, turnId, clientId));
         assertThat(publisher.publicEvents()).extracting(GameRealtimeEvent::type)
-                .containsExactly(GameEventType.PLAYER_ACTION, GameEventType.GAME_STATE_UPDATE);
+                .containsExactly(GameEventType.PLAYER_ACTION, GameEventType.GAME_STATE_UPDATE,GameEventType.TIMER_UPDATE);
         GameRealtimeEvent action = publisher.publicEvents().getFirst();
         assertThat(action.version()).isEqualTo(9);
         assertThat((PlayerAction) action.payload()).extracting(PlayerAction::amount, PlayerAction::clientActionId)
@@ -72,7 +78,8 @@ class GameRealtimeApplicationServiceTests {
         GameRuntimeView after = view(GamePhase.FLOP, List.of(card(Rank.TWO), card(Rank.THREE), card(Rank.FOUR)), 9, false, 2L);
         accepted(before, after, null);
         assertThat(publisher.all).extracting(Sent::type).containsExactly(GameEventType.PLAYER_ACTION,
-                GameEventType.COMMUNITY_CARDS, GameEventType.GAME_STATE_UPDATE, GameEventType.YOUR_TURN);
+                GameEventType.COMMUNITY_CARDS, GameEventType.GAME_STATE_UPDATE, GameEventType.YOUR_TURN,
+                GameEventType.TIMER_UPDATE);
         assertThat(((CommunityCards) publisher.all.get(1).event().payload()).cards()).hasSize(3).doesNotHaveDuplicates();
     }
 
@@ -116,7 +123,7 @@ class GameRealtimeApplicationServiceTests {
     private void accepted(GameRuntimeView before, GameRuntimeView after, HandSettlementResult settlement) {
         when(runtime.isParticipant(gameId, 1)).thenReturn(true);
         when(runtime.applyActionWithOutcome(eq(gameId), eq(1L), any())).thenReturn(new GameActionOutcome(before, after,
-                1, 1, PokerActionType.CHECK, 0, 0, 900, UUID.randomUUID(), settlement));
+                1, 1, PokerActionType.CHECK, 0, 0, 900, UUID.randomUUID(), settlement,false));
         if (!after.handCompleted()) when(runtime.privateView(gameId, after.currentTurnUserId())).thenReturn(privateView(after.currentTurnUserId(), List.of(), true));
         service.handleAction(gameId, 1, new GameActionMessage(PokerActionType.CHECK, null, turnId, UUID.randomUUID()));
     }

@@ -69,7 +69,8 @@ public class GameRuntimeService {
                 if (transition.handDecidedByFold() || context.state.phase() == GamePhase.SHOWDOWN) settlement = complete(context);
                 return new GameActionOutcome(before, view(context), userId, player.seatNumber(),
                         transition.bettingResult().actionType(), transition.bettingResult().amountCommitted(),
-                        transition.bettingResult().resultingCurrentBet(), player.tableChips(), intent.clientActionId(), settlement);
+                        transition.bettingResult().resultingCurrentBet(), player.tableChips(), intent.clientActionId(), settlement,
+                        intent.clientActionId() == null);
             } catch (RuntimeException failure) {
                 if (!(failure instanceof BettingRuleViolationException)) context.failed = true;
                 throw failure;
@@ -109,6 +110,21 @@ public class GameRuntimeService {
     public GameRuntimeView currentView(UUID gameId) {
         ActiveGameContext context = registry.require(gameId); context.lock.lock();
         try { return view(context); } finally { context.lock.unlock(); }
+    }
+
+    public Optional<GameActionOutcome> handleTurnTimeout(UUID gameId, long expectedHandId, UUID expectedTurnId) {
+        ActiveGameContext context;
+        try { context=registry.require(gameId); } catch(GameRuntimeException ignored){return Optional.empty();}
+        context.lock.lock();
+        try {
+            if(context.failed||context.handCompleted||context.sessionFinished||context.history.pokerHandId()!=expectedHandId
+                    ||context.state.currentTurnUserId()==null||!Objects.equals(context.state.turnId(),expectedTurnId))return Optional.empty();
+            long actor=context.state.currentTurnUserId();
+            LegalActions legal=rounds.legalActions(context.state,context.round,actor);
+            if(legal.actions().isEmpty())return Optional.empty();
+            PokerActionType type=legal.allows(PokerActionType.CHECK)?PokerActionType.CHECK:PokerActionType.FOLD;
+            return Optional.of(applyActionWithOutcome(gameId,actor,new GameActionIntent(expectedTurnId,null,type,0)));
+        } finally {context.lock.unlock();}
     }
 
     public GameRuntimeView startNextHand(UUID gameId) {

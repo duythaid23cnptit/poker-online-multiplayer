@@ -6,9 +6,12 @@ import com.ptit.poker.game.application.runtime.*;
 import com.ptit.poker.game.domain.betting.BettingRuleViolationException;
 import com.ptit.poker.game.domain.settlement.HandSettlementResult;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
@@ -17,9 +20,15 @@ public class GameRealtimeApplicationService {
     private final GameRuntimeService runtime;
     private final GameRealtimePublisher publisher;
     private final Clock clock;
+    private final TurnTimerScheduler timers;
+    private final TurnTimerConfiguration timerConfiguration;
+    private final ConcurrentHashMap<UUID, ActiveTimer> activeTimers=new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Object> eventLocks=new ConcurrentHashMap<>();
 
-    public GameRealtimeApplicationService(GameRuntimeService runtime, GameRealtimePublisher publisher, Clock clock) {
+    public GameRealtimeApplicationService(GameRuntimeService runtime, GameRealtimePublisher publisher, Clock clock,
+                                          TurnTimerScheduler timers, TurnTimerConfiguration timerConfiguration) {
         this.runtime = runtime; this.publisher = publisher; this.clock = clock;
+        this.timers=timers; this.timerConfiguration=timerConfiguration;
     }
 
     public GameRuntimeView startGame(long roomId) {
@@ -29,16 +38,19 @@ public class GameRealtimeApplicationService {
     }
 
     public void announceStartedGame(GameRuntimeView view) {
-        publishPublic(view, GameEventType.GAME_STARTED, new Started(view.gameSessionId(), view.handId(), view.handNumber()));
-        publishHandStarted(view);
+        synchronized(eventLock(view.gameId())) {
+            publishPublic(view, GameEventType.GAME_STARTED, new Started(view.gameSessionId(), view.handId(), view.handNumber()));
+            publishHandStarted(view); replaceTimer(view);
+        }
     }
 
     public GameRuntimeView startNextHand(UUID gameId) {
         GameRuntimeView view = runtime.startNextHand(gameId);
         if (view.sessionFinished()) {
             publishPublic(view, GameEventType.GAME_STATE_UPDATE, state(view));
+            cancelTimer(view.gameId());
         } else {
-            publishHandStarted(view);
+            synchronized(eventLock(view.gameId())) { publishHandStarted(view); replaceTimer(view); }
         }
         return view;
     }
@@ -47,8 +59,9 @@ public class GameRealtimeApplicationService {
         try {
             if (!runtime.isParticipant(gameId, userId)) throw new GameRuntimeException("NOT_GAME_PARTICIPANT");
             GameActionOutcome outcome = runtime.applyActionWithOutcome(gameId, userId, message.toIntent());
-            publishAccepted(outcome);
+            synchronized(eventLock(gameId)) { publishAccepted(outcome); replaceTimer(outcome.after()); }
         } catch (RuntimeException failure) {
+            try { if(runtime.currentView(gameId).failed())cancelTimer(gameId); } catch(RuntimeException ignored) {}
             publishError(gameId, userId, message == null ? null : message.clientActionId(), failure);
         }
     }
@@ -57,7 +70,7 @@ public class GameRealtimeApplicationService {
         GameRuntimeView after = outcome.after();
         publishPublic(after, GameEventType.PLAYER_ACTION, new PlayerAction(outcome.userId(), outcome.seat(),
                 outcome.actionType(), outcome.amountCommitted(), outcome.resultingCurrentBet(),
-                outcome.resultingTableChips(), outcome.clientActionId()));
+                outcome.resultingTableChips(), outcome.clientActionId(), outcome.automatic()));
         if (after.communityCards().size() > outcome.before().communityCards().size()) {
             publishPublic(after, GameEventType.COMMUNITY_CARDS, new CommunityCards(after.phase(), after.communityCards()));
         }
@@ -128,4 +141,52 @@ public class GameRealtimeApplicationService {
         return new GameRealtimeEvent(UUID.randomUUID(), type, Instant.now(clock), view.roomId(), view.gameId(),
                 view.stateVersion(), payload);
     }
+
+    private void replaceTimer(GameRuntimeView view) {
+        cancelTimer(view.gameId());
+        if(view.failed()||view.handCompleted()||view.sessionFinished()||view.currentTurnUserId()==null||view.turnId()==null)return;
+        Instant deadline=clock.instant().plus(timerConfiguration.turnTimeout());
+        UUID expectedTurn=view.turnId(); long expectedHand=view.handId();
+        TurnTimerScheduler.Cancellable deadlineHandle=timers.schedule(deadline,
+                ()->onDeadline(view.gameId(),expectedHand,expectedTurn));
+        TurnTimerScheduler.Cancellable tickHandle=timers.scheduleAtFixedRate(timerConfiguration.updateCadence(),
+                ()->publishTimerIfCurrent(view.gameId(),expectedHand,expectedTurn,deadline));
+        activeTimers.put(view.gameId(),new ActiveTimer(expectedHand,expectedTurn,deadline,deadlineHandle,tickHandle));
+        publishTimer(view,deadline);
+    }
+    private void onDeadline(UUID gameId,long handId,UUID turnId) {
+        synchronized(eventLock(gameId)) {
+            ActiveTimer active=activeTimers.get(gameId);
+            if(active==null||active.handId()!=handId||!active.turnId().equals(turnId))return;
+            try {
+                runtime.handleTurnTimeout(gameId,handId,turnId)
+                        .ifPresent(outcome->{publishAccepted(outcome);replaceTimer(outcome.after());});
+            } catch(RuntimeException failure) { cancelTimer(gameId); }
+        }
+    }
+    private void publishTimerIfCurrent(UUID gameId,long handId,UUID turnId,Instant deadline) {
+        synchronized(eventLock(gameId)) {
+            ActiveTimer active=activeTimers.get(gameId);
+            if(active==null||active.handId()!=handId||!active.turnId().equals(turnId))return;
+            GameRuntimeView current;
+            try {current=runtime.currentView(gameId);} catch(RuntimeException ignored){cancelTimer(gameId);return;}
+            if(current.failed()||current.handCompleted()||current.sessionFinished()||current.handId()!=handId
+                    ||!Objects.equals(current.turnId(),turnId)){cancelTimer(gameId);return;}
+            int seat=current.players().stream().filter(player->player.userId()==current.currentTurnUserId())
+                    .mapToInt(GameRuntimeView.PlayerView::seat).findFirst().orElseThrow();
+            publishTimer(current,deadline);
+        }
+    }
+    private void publishTimer(GameRuntimeView current,Instant deadline) {
+        int seat=current.players().stream().filter(player->player.userId()==current.currentTurnUserId())
+                .mapToInt(GameRuntimeView.PlayerView::seat).findFirst().orElseThrow();
+        long remaining=Math.max(0,(Duration.between(clock.instant(),deadline).toMillis()+999)/1000);
+        publishPublic(current,GameEventType.TIMER_UPDATE,new Timer(current.handId(),current.turnId(),seat,remaining,deadline));
+    }
+    private void cancelTimer(UUID gameId) {
+        ActiveTimer old=activeTimers.remove(gameId);if(old!=null){old.deadlineHandle().cancel();old.tickHandle().cancel();}
+    }
+    private Object eventLock(UUID gameId){return eventLocks.computeIfAbsent(gameId,ignored->new Object());}
+    private record ActiveTimer(long handId,UUID turnId,Instant deadline,TurnTimerScheduler.Cancellable deadlineHandle,
+                               TurnTimerScheduler.Cancellable tickHandle) {}
 }

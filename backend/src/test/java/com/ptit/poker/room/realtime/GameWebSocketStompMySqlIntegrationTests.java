@@ -38,7 +38,8 @@ import org.springframework.web.socket.messaging.WebSocketStompClient;
 @EnabledIfEnvironmentVariable(named="TEST_DB_PASSWORD", matches=".+")
 @ActiveProfiles("test")
 @ContextConfiguration(initializers=TestDatabaseSafetyInitializer.class)
-@SpringBootTest(webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,properties={
+        "poker.game.turn-timeout=3s","poker.game.timer-update-cadence=500ms"})
 @Import(RoomWebSocketStompMySqlIntegrationTests.SubscriptionProbeConfiguration.class)
 class GameWebSocketStompMySqlIntegrationTests {
     @LocalServerPort int port;
@@ -95,6 +96,9 @@ class GameWebSocketStompMySqlIntegrationTests {
             assertThat(publicJson).doesNotContain("holeCards","HOLE_CARDS");
             privateCodes.forEach(code->assertThat(publicJson).doesNotContain(code));
         }
+        JsonNode spectatorTimer=await(spectatorPublic,GameEventType.TIMER_UPDATE);
+        assertThat(spectatorTimer.at("/payload/turnId").asText()).isEqualTo(started.turnId().toString());
+        assertThat(spectatorTimer.toString()).doesNotContain("holeCards","legalActions");
         assertThat(spectatorPrivate.poll(300,TimeUnit.MILLISECONDS)).isNull();
 
         UUID clientId=UUID.randomUUID();
@@ -120,8 +124,42 @@ class GameWebSocketStompMySqlIntegrationTests {
         assertThat(await(secondPrivate,GameEventType.HOLE_CARDS).at("/payload/handId").asLong()).isNotEqualTo(started.handId());
     }
 
+    @Test void deadlineAutoFoldPersistsAndPublishesTerminalEvents() throws Exception {
+        Fixture fixture=fixture(); GameRuntimeView started=runtime.startGame(fixture.roomId());
+        Handler handler=new Handler();StompSession session=connect(fixture.first(),handler);QueueFrames publicFrames=new QueueFrames();
+        subscribe(session,"/topic/game/"+started.gameId(),publicFrames);realtime.announceStartedGame(started);
+        await(publicFrames,GameEventType.TIMER_UPDATE);
+        JsonNode action=await(publicFrames,GameEventType.PLAYER_ACTION);
+        assertThat(action.at("/payload/actionType").asText()).isEqualTo("FOLD");
+        assertThat(action.at("/payload/automatic").asBoolean()).isTrue();
+        await(publicFrames,GameEventType.GAME_RESULT);await(publicFrames,GameEventType.HAND_FINISHED);
+        assertThat(actions.findAllByPokerHandIdOrderByActionSequence(started.handId())).hasSize(1)
+                .extracting(value->value.getActionType()).containsExactly(com.ptit.poker.game.domain.betting.PokerActionType.FOLD);
+    }
+
+    @Test void deadlineAutoCheckPersistsAndPublishesThenOldTurnCannotDuplicate() throws Exception {
+        Fixture fixture=fixture();GameRuntimeView started=runtime.startGame(fixture.roomId());
+        GameRuntimeView matched=runtime.applyAction(started.gameId(),started.currentTurnUserId(),new GameActionIntent(
+                started.turnId(),UUID.randomUUID(),com.ptit.poker.game.domain.betting.PokerActionType.CALL,0));
+        Handler handler=new Handler();StompSession session=connect(fixture.second(),handler);QueueFrames publicFrames=new QueueFrames();
+        subscribe(session,"/topic/game/"+matched.gameId(),publicFrames);realtime.announceStartedGame(matched);
+        await(publicFrames,GameEventType.TIMER_UPDATE);JsonNode action=await(publicFrames,GameEventType.PLAYER_ACTION);
+        assertThat(action.at("/payload/actionType").asText()).isEqualTo("CHECK");assertThat(action.at("/payload/automatic").asBoolean()).isTrue();
+        assertThat(actions.findAllByPokerHandIdOrderByActionSequence(matched.handId())).hasSize(2);
+        GameRuntimeView current=runtime.currentView(matched.gameId());
+        realtime.handleAction(current.gameId(),current.currentTurnUserId(),new com.ptit.poker.game.api.realtime.GameActionMessage(
+                com.ptit.poker.game.domain.betting.PokerActionType.FOLD,null,current.turnId(),UUID.randomUUID()));
+        assertThat(actions.findAllByPokerHandIdOrderByActionSequence(matched.handId())).hasSize(3);
+    }
+
+    private Fixture fixture(){UserEntity first=user(),second=user();long roomId=rooms.create(first.getId(),new CreateRoomRequest(
+            "timer-"+UUID.randomUUID(),RoomType.PUBLIC,6,50,100,1_000,null)).room().id();
+        rooms.join(first.getId(),roomId,new JoinRoomRequest(false,1,1_000L,null));rooms.join(second.getId(),roomId,new JoinRoomRequest(false,2,1_000L,null));
+        rooms.setReady(first.getId(),roomId,true);rooms.setReady(second.getId(),roomId,true);return new Fixture(roomId,first,second);}
+    private record Fixture(long roomId,UserEntity first,UserEntity second){}
+
     private JsonNode await(QueueFrames frames,GameEventType type)throws Exception{
-        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
+        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(8);
         while(true){long remaining=deadline-System.nanoTime();if(remaining<=0)throw new AssertionError("Timed out waiting for "+type);
             byte[] payload=frames.poll(remaining,TimeUnit.NANOSECONDS);if(payload==null)throw new AssertionError("Timed out waiting for "+type);
             JsonNode node=json.readTree(payload);if(type.name().equals(node.path("type").asText()))return node;}
