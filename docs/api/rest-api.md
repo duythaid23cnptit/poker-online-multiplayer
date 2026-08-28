@@ -161,3 +161,6 @@ All endpoints require an admin role and produce an audit record.
 `GET /api/v1/players/me/statistics` requires an access token and derives the user from the authenticated principal. A user without completed history receives a zero-valued response rather than 404. Clients cannot submit or mutate official statistics.
 
 Definitions: a game is a finished game session containing at least one completed hand for the player. A session is a win or loss when the sum of its hand chip deltas is positive or negative; zero is neutral but still counts as a game. Win rate is wins divided by all games, as a percentage. Chips won/lost are positive and absolute-negative completed-hand deltas; net chip is their difference. Largest pot won is the player's largest actual persisted pot award, including split/side-pot semantics. Average playing time is the average, in whole seconds, between the earliest participated completed-hand start and latest participated completed-hand finish in each completed session.
+## Rankings
+
+Authenticated endpoints are `GET /api/v1/rankings/me`, `GET /api/v1/rankings/leaderboard?page=0&size=20`, and `GET /api/v1/rankings/me/history?page=0&size=20`. Sizes are limited to 1–100. Unrated users return rating/peak 1000, zero games, and null rank; they are excluded from the leaderboard.

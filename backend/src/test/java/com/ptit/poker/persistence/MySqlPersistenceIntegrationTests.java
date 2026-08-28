@@ -50,7 +50,7 @@ class MySqlPersistenceIntegrationTests {
         private static final Set<String> REQUIRED_TABLES = Set.of(
                         "users", "player_profiles", "refresh_tokens", "rooms", "room_players",
                         "game_sessions", "poker_hands", "hand_players", "player_actions", "pots",
-                        "pot_awards", "uncalled_bet_returns", "player_statistics");
+                        "pot_awards", "uncalled_bet_returns", "player_statistics", "player_rankings", "ranking_history");
 
         @Autowired
         private Flyway flyway;
@@ -76,7 +76,7 @@ class MySqlPersistenceIntegrationTests {
         @Test
         void flywayAndHibernateValidateTheRequiredSchema() {
                 assertThat(flyway.info().current()).isNotNull();
-                assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("6");
+                assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("7");
 
                 Set<String> tables = Set.copyOf(jdbcTemplate.queryForList(
                                 "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()",

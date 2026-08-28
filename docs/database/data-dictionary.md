@@ -126,3 +126,6 @@ Gameplay persistence retains the distinction that one Game Session contains many
 ## Player statistics (`player_statistics`)
 
 `player_statistics` is an idempotently replaceable projection derived only from completed gameplay history. Its primary key and foreign key are `user_id`; counters, chip totals, the largest actual `pot_awards.amount_awarded`, average participated-session seconds, and the last projection timestamp are stored. Flyway V6 owns this table. It is not a ranking or leaderboard table.
+## Rankings (`player_rankings`, `ranking_history`)
+
+Flyway V7 adds current competitive ratings and immutable per-session changes. Ratings start at 1000, never fall below zero, and history is unique by `(user_id, game_session_id)`. Leaderboard rank is computed, not stored.

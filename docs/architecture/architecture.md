@@ -144,3 +144,6 @@ Randomness must be generated server-side with an appropriate secure source. Test
 ## Player-statistics projection
 
 The analytics module reads completed game history through a narrow read port and replaces each player's materialized statistics row. A game-session completion event is handled after the gameplay transaction commits. Projection failures are logged and remain repairable; they cannot roll back authoritative gameplay or settlement.
+## Multiplayer Elo ranking
+
+After a game session commits, ranking independently reads participant session-net results. With initial rating 1000 and K=32, every player is compared pairwise against every opponent, expected scores use the standard 400-point logistic formula, actual scores are 1/0.5/0, and averages produce one simultaneously calculated rounded delta. Competition placement uses session net; the rating floor is zero. Participant rows are locked in user-ID order and history makes a session idempotent.

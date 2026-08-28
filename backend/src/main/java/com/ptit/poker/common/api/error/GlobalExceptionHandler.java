@@ -15,6 +15,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -78,6 +79,12 @@ public class GlobalExceptionHandler {
     ResponseEntity<ApiError> handleMissingProfile() {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
                 ApiError.of("PROFILE_NOT_FOUND", "Player profile was not found"));
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    ResponseEntity<ApiError> handleResponseStatus(ResponseStatusException exception) {
+        String message = exception.getReason() == null ? "Request was rejected" : exception.getReason();
+        return ResponseEntity.status(exception.getStatusCode()).body(ApiError.of("INVALID_REQUEST", message));
     }
 
     @ExceptionHandler(Exception.class)
