@@ -9,6 +9,7 @@ import java.time.ZoneOffset;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -23,8 +24,9 @@ class GameSessionPersistenceServiceTests {
     private static final Instant NOW = Instant.parse("2026-08-24T12:00:00Z");
     private final GameSessionRepository repository = mock(GameSessionRepository.class);
     private final RoomExistencePort rooms = mock(RoomExistencePort.class);
+    private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
     private final GameSessionPersistenceService service = new GameSessionPersistenceService(
-            repository, rooms, Clock.fixed(NOW, ZoneOffset.UTC));
+            repository, rooms, Clock.fixed(NOW, ZoneOffset.UTC), events);
 
     @Test
     void missingRoomIsRejectedBeforePersistence() {

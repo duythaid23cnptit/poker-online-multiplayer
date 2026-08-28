@@ -123,3 +123,6 @@ All gameplay chip values have database checks, seats are restricted to 1–9, en
 The following remain planned after Phase 6A: `friendships`, `chat_messages`, `player_statistics`, `player_rankings`, `ranking_history`, `daily_statistics`, and `weekly_statistics`.
 
 Gameplay persistence retains the distinction that one Game Session contains many Poker Hands. Runtime hand finalization and transaction orchestration are intentionally not implemented by Phase 6A.
+## Player statistics (`player_statistics`)
+
+`player_statistics` is an idempotently replaceable projection derived only from completed gameplay history. Its primary key and foreign key are `user_id`; counters, chip totals, the largest actual `pot_awards.amount_awarded`, average participated-session seconds, and the last projection timestamp are stored. Flyway V6 owns this table. It is not a ranking or leaderboard table.

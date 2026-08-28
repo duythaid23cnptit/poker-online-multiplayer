@@ -205,8 +205,8 @@ class GameplayHistoryMySqlIntegrationTests {
     }
 
     @Test
-    void flywayV5AndHibernateValidateAllGameplayHistoryTables() {
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("5");
+    void flywayV6PreservesAndHibernateValidatesAllGameplayHistoryTables() {
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("6");
         Set<String> actual = Set.copyOf(jdbc.queryForList(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()", String.class));
         assertThat(actual).containsAll(TABLES);

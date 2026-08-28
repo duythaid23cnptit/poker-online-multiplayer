@@ -4,6 +4,7 @@ import com.ptit.poker.game.infrastructure.persistence.GameSessionEntity;
 import com.ptit.poker.game.infrastructure.persistence.GameSessionRepository;
 import com.ptit.poker.game.infrastructure.persistence.GameSessionStatus;
 import org.springframework.context.annotation.Profile;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,8 +16,10 @@ public class GameSessionPersistenceService {
     private final GameSessionRepository sessions;
     private final RoomExistencePort rooms;
     private final Clock clock;
-    public GameSessionPersistenceService(GameSessionRepository sessions, RoomExistencePort rooms, Clock clock) {
-        this.sessions = sessions; this.rooms = rooms; this.clock = clock;
+    private final ApplicationEventPublisher events;
+    public GameSessionPersistenceService(GameSessionRepository sessions, RoomExistencePort rooms, Clock clock,
+                                         ApplicationEventPublisher events) {
+        this.sessions = sessions; this.rooms = rooms; this.clock = clock;this.events=events;
     }
     @Transactional
     public GameSessionView startSession(long roomId) {
@@ -34,7 +37,9 @@ public class GameSessionPersistenceService {
         } catch (IllegalStateException exception) {
             throw error("INVALID_SESSION_TRANSITION", exception.getMessage());
         }
-        return view(sessions.saveAndFlush(session));
+        GameSessionView result=view(sessions.saveAndFlush(session));
+        if(!abort)events.publishEvent(new GameSessionFinishedEvent(id));
+        return result;
     }
     private static GameSessionView view(GameSessionEntity entity) {
         return new GameSessionView(entity.getId(), entity.getRoomId(), entity.getStatus(),

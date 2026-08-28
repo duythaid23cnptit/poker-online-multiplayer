@@ -38,7 +38,7 @@ public class SecurityConfiguration {
                         .requestMatchers("/ws", "/ws/**").permitAll()
                         .requestMatchers("/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/refresh")
                         .permitAll()
-                        .requestMatchers("/api/v1/auth/logout", "/api/v1/me", "/api/v1/rooms/**").authenticated()
+                        .requestMatchers("/api/v1/auth/logout", "/api/v1/me", "/api/v1/players/me/statistics", "/api/v1/rooms/**").authenticated()
                         .anyRequest().denyAll())
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();

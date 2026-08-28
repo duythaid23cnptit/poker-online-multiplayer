@@ -141,3 +141,6 @@ Randomness must be generated server-side with an appropriate secure source. Test
   backend/             # introduced in a later phase
   frontend/            # introduced in a later phase
 ```
+## Player-statistics projection
+
+The analytics module reads completed game history through a narrow read port and replaces each player's materialized statistics row. A game-session completion event is handled after the gameplay transaction commits. Projection failures are logged and remain repairable; they cannot roll back authoritative gameplay or settlement.

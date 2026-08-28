@@ -84,3 +84,6 @@ The arrows describe allowed contract-level use, not permission to import interna
 - Java package visibility, architecture tests (for example ArchUnit if approved later), and build/module conventions should enforce boundaries.
 - Shared transaction needs are orchestrated through application contracts; do not solve them by sharing repositories.
 - Internal events carry stable facts and an event ID for idempotent consumers.
+### Game to analytics
+
+Game publishes the narrow `GameSessionFinishedEvent`; analytics handles it after commit through `PlayerStatisticsRefreshPort`. Analytics reads history through `PlayerStatisticsHistoryPort` and never mutates game entities or repositories. Game does not depend on analytics persistence.
