@@ -41,7 +41,7 @@ class AdminMutationMySqlIntegrationTests {
         for(long id:userIds)jdbc.update("DELETE FROM users WHERE id=?",id);
     }
     @Test void v9CreatesAppendOnlyAuditTableAndHibernateValidates(){
-        assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success=TRUE ORDER BY installed_rank DESC LIMIT 1",String.class)).isEqualTo("9");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM flyway_schema_history WHERE version='9' AND success=TRUE",Long.class)).isOne();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='admin_audit_log'",Long.class)).isOne();
     }
     @Test void suspendReactivateAndIdempotencyAreAuditedWithoutSecrets()throws Exception{

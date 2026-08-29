@@ -206,7 +206,9 @@ class GameplayHistoryMySqlIntegrationTests {
 
     @Test
     void flywayV9PreservesAndHibernateValidatesAllGameplayHistoryTables() {
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("9");
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM flyway_schema_history WHERE version='9' AND success=TRUE", Long.class)).isOne();
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("10");
         Set<String> actual = Set.copyOf(jdbc.queryForList(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()", String.class));
         assertThat(actual).containsAll(TABLES);
