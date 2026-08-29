@@ -178,3 +178,16 @@ Authenticated current-player endpoints are:
 Range endpoints return only stored data-bearing buckets in ascending order.
 Summary returns explicit zero-valued DTOs when current data is absent without
 persisting zero rows. Identity always comes from the JWT principal.
+# Phase 9A read-only admin API
+
+Every `/api/v1/admin/**` endpoint requires `ROLE_ADMIN`; unauthenticated callers
+receive 401 and authenticated players receive 403. Phase 9A exposes read-only
+`GET` endpoints for `/overview`, `/users`, `/users/{id}`, `/rooms`,
+`/rooms/{id}`, `/games`, `/games/{id}`, and `/games/{id}/hands`.
+
+Lists use `page=0`, `size=20` defaults and enforce `page >= 0` and
+`1 <= size <= 100`. Users support bound `search`, `status`, and `role` filters;
+rooms support `search`, `status`, and `roomType`; games support `status`,
+`roomId`, `userId`, `from`, and `to`. Default ordering is deterministic and
+server-defined. Responses never include password hashes, tokens, private-room
+hashes, or hole cards.

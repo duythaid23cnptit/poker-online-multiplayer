@@ -162,3 +162,15 @@ The business timezone is `Asia/Bangkok`. Hands belong to the local date of
 as `handsTied`. Playing time sums, per represented session, the interval from
 its earliest hand start to latest hand finish within the bucket, avoiding gaps
 between unrelated sessions.
+# Phase 9A admin read model
+
+The admin feature is a read-only query module. Controllers call an application
+service, which normalizes and validates filters before using a narrow read port.
+The JDBC adapter composes cross-module reports directly into explicit admin
+DTOs. Persisted state remains authoritative; Phase 9A does not depend on active
+game runtime internals and performs no moderation or balance mutation.
+
+Overview counts all users, ACTIVE accounts, all rooms, WAITING/PLAYING open
+rooms, ACTIVE/FINISHED sessions, completed hands, and account-chip balances.
+List queries use joined projections or aggregate subqueries and avoid per-item
+repository loading.

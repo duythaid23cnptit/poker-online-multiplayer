@@ -94,3 +94,10 @@ through `TimeBucketAnalyticsHistoryPort`. Its JDBC adapter may query gameplay
 tables read-only; analytics does not depend on game repositories or expose game
 or persistence entities. The game module publishes `GameSessionFinishedEvent`
 and does not call analytics directly.
+# Admin query boundary
+
+`com.ptit.poker.admin` may read cross-feature persisted reporting data only
+through `AdminReadPort`. Its JDBC adapter depends on existing schemas but does
+not expose feature JPA entities. Other modules do not depend on admin. Live
+runtime access is intentionally absent from Phase 9A; any future need requires
+a narrow runtime query port rather than `ActiveGameContext` access.

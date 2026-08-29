@@ -38,6 +38,7 @@ public class SecurityConfiguration {
                         .requestMatchers("/ws", "/ws/**").permitAll()
                         .requestMatchers("/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/refresh")
                         .permitAll()
+                        .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/auth/logout", "/api/v1/me", "/api/v1/players/me/statistics", "/api/v1/rankings/**", "/api/v1/analytics/**", "/api/v1/rooms/**").authenticated()
                         .anyRequest().denyAll())
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
