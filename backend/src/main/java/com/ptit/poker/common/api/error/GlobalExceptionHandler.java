@@ -7,6 +7,7 @@ import com.ptit.poker.auth.application.exception.InvalidRefreshTokenException;
 import com.ptit.poker.player.application.exception.ProfileNotFoundException;
 import com.ptit.poker.room.application.exception.RoomBusinessException;
 import com.ptit.poker.admin.application.AdminModerationException;
+import com.ptit.poker.social.application.FriendshipException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -24,6 +25,11 @@ import java.util.List;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(FriendshipException.class)
+    ResponseEntity<ApiError> friendship(FriendshipException exception) {
+        return ResponseEntity.status(exception.status()).body(ApiError.of(exception.code(), exception.getMessage()));
+    }
 
     @ExceptionHandler(AdminModerationException.class)
     ResponseEntity<ApiError> adminModeration(AdminModerationException exception) {

@@ -32,7 +32,9 @@ Owns friend requests, acceptance/rejection, friendship lifecycle, friend list, f
 
 May depend on: `common`, safe `player` projections, and a narrow `room` membership query. It must not access auth secrets or game state.
 
-Phase 10A.1 stores exactly one row per canonical user pair, enforced by generated lower/higher user IDs and a database unique constraint. Direction remains explicit for pending authorization. Crossed pending requests transition the existing row to accepted; rejected pairs are reopened in place; accepted removal hard-deletes the row. The schema invariant handles simultaneous initial inserts independently of later optimistic locking. REST orchestration, notifications, presence refinement, and chat are not part of Phase 10A.1.
+Phase 10A stores exactly one row per canonical user pair, enforced by generated lower/higher user IDs and a database unique constraint. Direction remains explicit for pending authorization. The Phase 10A.2 application service owns transactional lifecycle decisions behind `FriendshipPersistencePort` and `SocialPlayerQueryPort`. Its JDBC adapter uses validated `INSERT IGNORE`, verifies a zero-row insert by selecting the canonical row `FOR UPDATE`, and row-locks accept/reject decisions; every actual update increments `version`. Crossed pending requests transition the existing row to accepted, rejected pairs reopen in place, and accepted removal hard-deletes the row.
+
+Social application/domain code does not import auth/player persistence types. The player adapter returns only batched safe summaries (`userId`, `displayName`, `avatarUrl`), avoiding per-friend profile queries. REST obtains the requester only from the authenticated principal. Notifications, presence refinement, and chat remain outside Phase 10A.2.
 
 ### `room`
 
