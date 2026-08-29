@@ -107,8 +107,27 @@ erDiagram
 
 Board and private-card snapshots use deterministic comma-separated card codes such as `AS,KD,7H`. They are history storage, not public transport fields. Pot winners are normalized through `pot_awards`, allowing ties and per-winner payouts; unmatched excess is represented separately by `uncalled_bet_returns`.
 
-## Planned after Phase 6A
+## Phase 10A.1 friendship schema
 
-The frozen logical model still plans `friendships`, `chat_messages`, `player_statistics`, `player_rankings`, `ranking_history`, `daily_statistics`, and `weekly_statistics`.
+Flyway `V10` adds one social-owned `friendships` row per unordered pair of users. Original request direction is retained in `requester_user_id` and `recipient_user_id`; stored generated `lower_user_id` and `higher_user_id` columns canonicalize the pair with `LEAST`/`GREATEST`. Their unique constraint prevents duplicate same-direction and opposite-direction rows, including concurrent inserts.
+
+The persisted states are exactly `PENDING`, `ACCEPTED`, and `REJECTED`. Rejected pairs reuse the row for a later request, and removal of an accepted friendship will hard-delete it. `chat_messages` remains planned and is not implemented by Phase 10A.1.
+
+```mermaid
+erDiagram
+  USERS ||--o{ FRIENDSHIPS : requester
+  USERS ||--o{ FRIENDSHIPS : recipient
+  FRIENDSHIPS {
+    bigint id PK
+    bigint requester_user_id FK
+    bigint recipient_user_id FK
+    bigint lower_user_id FK,UK
+    bigint higher_user_id FK,UK
+    varchar status
+    datetime created_at
+    datetime responded_at
+    bigint version
+  }
+```
 
 A Game Session now represents continuous play in one room and contains many individual Poker Hands. Phase 6A supplies persistence mappings only; runtime orchestration remains deferred.

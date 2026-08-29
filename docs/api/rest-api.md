@@ -58,6 +58,8 @@ Registration and login validate input. Login uses a generic invalid-credentials 
 
 Realtime friend notifications/presence and new chat messages use STOMP.
 
+Phase 10A.1 freezes persistence and behavior but does not implement these endpoints. Requester identity will come only from the authenticated principal. A user cannot request themselves; both users must exist and the recipient must be `ACTIVE`. One canonical pair has one row. A same-direction duplicate pending request returns `409 FRIEND_REQUEST_ALREADY_EXISTS`; a crossed request automatically accepts the existing pending row; and a request for an accepted pair returns `409 FRIENDSHIP_ALREADY_EXISTS`. A rejected row is reopened as `PENDING` in place with the new direction and creation time and a null response time. Only the current recipient may accept or reject a pending request. Removing an accepted friendship is participant-authorized hard deletion; retry after deletion returns `FRIENDSHIP_NOT_FOUND`.
+
 ## Lobby and rooms
 
 Phase 4 uses authenticated `/api/v1/rooms` endpoints. All identities come from the JWT principal; requests never accept an owner or member user ID.

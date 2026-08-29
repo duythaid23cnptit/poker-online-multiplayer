@@ -32,6 +32,8 @@ Owns friend requests, acceptance/rejection, friendship lifecycle, friend list, f
 
 May depend on: `common`, safe `player` projections, and a narrow `room` membership query. It must not access auth secrets or game state.
 
+Phase 10A.1 stores exactly one row per canonical user pair, enforced by generated lower/higher user IDs and a database unique constraint. Direction remains explicit for pending authorization. Crossed pending requests transition the existing row to accepted; rejected pairs are reopened in place; accepted removal hard-deletes the row. The schema invariant handles simultaneous initial inserts independently of later optimistic locking. REST orchestration, notifications, presence refinement, and chat are not part of Phase 10A.1.
+
 ### `room`
 
 Owns lobby rooms, public/private access, password hashing/verification, capacity (6–9 seats), owner, `room_players`, Table Chip balances, buy-in/cash-out orchestration, seats, spectators, and room lifecycle before/around a game. Room states are `WAITING`, `PLAYING`, `FINISHED`, and `CLOSED`; player states are `NOT_READY`, `READY`, `PLAYING`, `SPECTATING`, `DISCONNECTED`, and `LEAVING`. It exposes membership/role queries and emits room lifecycle events.

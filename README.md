@@ -1,10 +1,10 @@
 # Poker Online Multiplayer
 
-A university Network Programming project for real-time multiplayer Texas Hold'em. The planned system uses a React/TypeScript client and a Java 17 Spring Boot modular-monolith server, communicating through REST and authenticated WebSocket/STOMP. Game state is server-authoritative.
+A university Network Programming project for real-time multiplayer Texas Hold'em. The system uses a React/TypeScript client and a Java 26 Spring Boot 3.5.16 modular-monolith server, communicating through REST and authenticated WebSocket/STOMP. Game state is server-authoritative.
 
 ## Current status
 
-Phase 0 architecture is frozen. Phase 4 adds authenticated room/lobby REST flows and the `/ws` STOMP foundation on top of Phase 3 authentication. It covers public/private rooms, membership, seats/spectators, ready state, atomic buy-in/cash-out, owner succession, and sanitized post-commit events. The Poker Engine is not implemented.
+Phases 0 through 9B are frozen, including authentication, rooms, the authoritative Poker Engine and realtime runtime, gameplay history, reconnect/timers, statistics, rankings, analytics, and audited admin moderation. Phase 10A.1 freezes friendship rules and the Flyway V10 schema; the friendship REST lifecycle, social notifications, chat, and full frontend remain later work.
 
 The approved baseline distinguishes persistent Account Chips from Table Chips transferred through server-controlled buy-in/cash-out, and distinguishes a continuous Game Session from each Poker Hand it contains. Room/player lifecycle, 60-second reconnect handling, and authoritative timeout/leave behavior are specified in the architecture documents.
 

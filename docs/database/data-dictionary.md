@@ -120,7 +120,7 @@ All gameplay chip values have database checks, seats are restricted to 1–9, en
 
 ## Planned tables
 
-The following remain planned after Phase 6A: `friendships`, `chat_messages`, `player_statistics`, `player_rankings`, `ranking_history`, `daily_statistics`, and `weekly_statistics`.
+`chat_messages` remains planned. Friendship persistence and the statistics, ranking, and time-bucket projection tables are implemented by later migrations described below.
 
 Gameplay persistence retains the distinction that one Game Session contains many Poker Hands. Runtime hand finalization and transaction orchestration are intentionally not implemented by Phase 6A.
 ## Player statistics (`player_statistics`)
@@ -144,3 +144,19 @@ The rows are derived projections. Gameplay history in `game_sessions`,
 ## `admin_audit_log` (Flyway V9)
 
 Append-only record of successful administrative state changes. Columns are `id`, acting `admin_user_id`, whitelisted `action_type`, whitelisted `target_type`, optional `target_id`, bounded optional `reason`, optional `request_id`, safe `metadata_json`, and microsecond `created_at`. The acting user has a restrictive foreign key to `users`. Indexes support actor/time and target/time reads. No update/delete API exists; metadata must never contain credentials, tokens, private-room secrets, or cards.
+
+## `friendships` (Flyway V10) — owner: social
+
+| Column | Type | Null/default | Meaning |
+|---|---|---|---|
+| `id` | `BIGINT` | PK, auto-increment | Friendship/request identifier |
+| `requester_user_id` | `BIGINT` | required, FK | Original/current request sender |
+| `recipient_user_id` | `BIGINT` | required, FK | Original/current request recipient |
+| `lower_user_id` | `BIGINT` | stored generated, FK | `LEAST(requester_user_id, recipient_user_id)` |
+| `higher_user_id` | `BIGINT` | stored generated, FK | `GREATEST(requester_user_id, recipient_user_id)` |
+| `status` | `VARCHAR(20)` | required | `PENDING`, `ACCEPTED`, or `REJECTED` |
+| `created_at` | `DATETIME(6)` | current UTC time | Current request creation/reopen instant |
+| `responded_at` | `DATETIME(6)` | nullable | Accept/reject instant |
+| `version` | `BIGINT` | `0` | Optimistic transition version |
+
+`uk_friendships_canonical_pair(lower_user_id, higher_user_id)` is the authoritative one-row-per-unordered-pair invariant. Checks reject self-pairs, noncanonical order, and unknown statuses. All four user columns reference `users.id` with restrictive deletion. Incoming and outgoing request reads use `(recipient_user_id, status, created_at)` and `(requester_user_id, status, created_at)` indexes; accepted symmetric lookups can use MySQL index merge over those participant indexes. Generated canonical columns are mapped read-only by JPA.

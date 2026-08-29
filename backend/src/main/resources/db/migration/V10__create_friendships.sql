@@ -1,0 +1,22 @@
+CREATE TABLE friendships (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    requester_user_id BIGINT NOT NULL,
+    recipient_user_id BIGINT NOT NULL,
+    lower_user_id BIGINT GENERATED ALWAYS AS (LEAST(requester_user_id, recipient_user_id)) STORED,
+    higher_user_id BIGINT GENERATED ALWAYS AS (GREATEST(requester_user_id, recipient_user_id)) STORED,
+    status VARCHAR(20) NOT NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    responded_at DATETIME(6) NULL,
+    version BIGINT NOT NULL DEFAULT 0,
+    CONSTRAINT pk_friendships PRIMARY KEY (id),
+    CONSTRAINT uk_friendships_canonical_pair UNIQUE (lower_user_id, higher_user_id),
+    CONSTRAINT chk_friendships_distinct_users CHECK (requester_user_id <> recipient_user_id),
+    CONSTRAINT chk_friendships_canonical_order CHECK (lower_user_id < higher_user_id),
+    CONSTRAINT chk_friendships_status CHECK (status IN ('PENDING', 'ACCEPTED', 'REJECTED')),
+    CONSTRAINT fk_friendships_requester FOREIGN KEY (requester_user_id) REFERENCES users (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_friendships_recipient FOREIGN KEY (recipient_user_id) REFERENCES users (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_friendships_lower_user FOREIGN KEY (lower_user_id) REFERENCES users (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_friendships_higher_user FOREIGN KEY (higher_user_id) REFERENCES users (id) ON DELETE RESTRICT,
+    INDEX idx_friendships_recipient_status_created (recipient_user_id, status, created_at),
+    INDEX idx_friendships_requester_status_created (requester_user_id, status, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

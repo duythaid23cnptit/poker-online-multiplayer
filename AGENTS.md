@@ -5,7 +5,7 @@ These rules apply to the entire repository and are durable constraints for futur
 ## Scope and stack
 
 - Build a real-time multiplayer Texas Hold'em system as a client-server modular monolith.
-- Backend: Java 17, Spring Boot, Maven, Spring MVC, Spring Security, JWT, Spring Data JPA/Hibernate, Flyway, MySQL 8.x, Jakarta Validation, WebSocket, and STOMP.
+- Backend: Java 26, Spring Boot 3.5.16, Maven, Spring MVC, Spring Security, JWT, Spring Data JPA/Hibernate, Flyway, MySQL 8.x, Jakarta Validation, WebSocket, and STOMP.
 - Frontend: React, TypeScript, Vite, React Router, TanStack Query, Zustand, React Hook Form, Zod, Tailwind CSS, and `@stomp/stompjs`.
 - Tests: JUnit 5, Mockito, Spring Boot Test, Vitest, and React Testing Library.
 - Local databases are `poker_online` and `poker_online_test`. Supply credentials only through environment variables. Never commit, log, invent, or hardcode passwords or tokens.
