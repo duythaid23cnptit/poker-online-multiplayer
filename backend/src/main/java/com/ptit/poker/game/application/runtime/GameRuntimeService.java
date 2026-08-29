@@ -17,21 +17,31 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Service @Profile("!bootstrap")
 public class GameRuntimeService {
     private static final Logger LOGGER=LoggerFactory.getLogger(GameRuntimeService.class);
     private final ActiveGameRegistry registry; private final RoomGamePort rooms;
+    private final AdministrativeGameControlPort administrativeControl;
     private final GameSessionPersistenceService sessions; private final HandHistoryPersistenceService history;
     private final DeckFactory decks; private final PokerRoundEngine rounds = new PokerRoundEngine();
     private final HandSettlementEngine settlements = new HandSettlementEngine(new HandEvaluator());
+    @Autowired
     public GameRuntimeService(ActiveGameRegistry registry, RoomGamePort rooms,
                               GameSessionPersistenceService sessions, HandHistoryPersistenceService history,
-                              DeckFactory decks) {
+                              DeckFactory decks, AdministrativeGameControlPort administrativeControl) {
         this.registry = registry; this.rooms = rooms; this.sessions = sessions; this.history = history; this.decks = decks;
+        this.administrativeControl = administrativeControl;
+    }
+    GameRuntimeService(ActiveGameRegistry registry, RoomGamePort rooms,GameSessionPersistenceService sessions,
+                       HandHistoryPersistenceService history,DeckFactory decks){
+        this(registry,rooms,sessions,history,decks,roomId->false);
     }
 
     public GameRuntimeView startGame(long roomId) {
+        if (administrativeControl.hasPendingTerminationForRoom(roomId))
+            throw new GameRuntimeException("ADMIN_TERMINATION_REQUESTED");
         RoomGamePort.RoomGameSnapshot room = rooms.load(roomId);
         List<RoomGamePort.RoomSeat> eligible = room.seats().stream()
                 .filter(s -> s.tableChips() > 0 && (s.state() == RoomPlayerState.READY || s.state() == RoomPlayerState.PLAYING))
@@ -63,6 +73,8 @@ public class GameRuntimeService {
         ActiveGameContext context = registry.require(gameId); context.lock.lock();
         try {
             requireMutable(context);
+            if (!automatic && context.administrativeDepartingUserIds.contains(userId))
+                throw new GameRuntimeException("PLAYER_REMOVAL_PENDING");
             GameRuntimeView before = view(context);
             BettingAction action = new BettingAction(userId, intent.turnId(), intent.type(), intent.targetCurrentBet());
             GamePhase phase = context.state.phase();
@@ -129,7 +141,7 @@ public class GameRuntimeService {
         try {
             PokerPlayer player = context.state.players().stream().filter(value->value.userId()==userId).findFirst().orElse(null);
             if (player != null && !player.isConnected()) return Optional.empty();
-            rooms.markDisconnected(context.roomId, userId);
+            if (!context.administrativeDepartingUserIds.contains(userId)) rooms.markDisconnected(context.roomId, userId);
             if(player!=null){player.markDisconnected();context.state.advanceStateVersion();}
             return Optional.of(new GameConnectionTransition(view(context), userId));
         } finally { context.lock.unlock(); }
@@ -141,7 +153,8 @@ public class GameRuntimeService {
         ActiveGameContext context = found.get(); context.lock.lock();
         try {
             PokerPlayer player = context.state.players().stream().filter(value->value.userId()==userId).findFirst().orElse(null);
-            if ((player != null && player.isConnected()) || context.reconnectExpiredUsers.contains(userId)) return Optional.empty();
+            if ((player != null && player.isConnected()) || context.reconnectExpiredUsers.contains(userId)
+                    || context.administrativeDepartingUserIds.contains(userId)) return Optional.empty();
             rooms.markReconnected(context.roomId, userId);
             if(player!=null){player.markConnected();context.state.advanceStateVersion();}
             return Optional.of(new GameConnectionTransition(view(context), userId));
@@ -187,7 +200,11 @@ public class GameRuntimeService {
         ActiveGameContext context = registry.require(gameId); context.lock.lock();
         try {
             if (!context.handCompleted || context.failed || context.sessionFinished) throw new GameRuntimeException("NEXT_HAND_NOT_ALLOWED");
-            finalizeExpiredDepartures(context);
+            finalizeDeferredDepartures(context);
+            if (context.administrativeTerminationRequested) {
+                finishAdministrativeTermination(context);
+                return view(context);
+            }
             RoomGamePort.RoomGameSnapshot room=rooms.load(context.roomId);
             List<RoomGamePort.RoomSeat> sessionSeats=room.seats().stream()
                     .filter(seat->context.sessionMemberUserIds.contains(seat.userId()))
@@ -224,6 +241,59 @@ public class GameRuntimeService {
                 .filter(context.sessionMemberUserIds::contains).toList();
         for(long userId:expired){rooms.finalizeActiveGameDeparture(context.roomId,userId);context.sessionMemberUserIds.remove(userId);}
     }
+
+    private void finalizeDeferredDepartures(ActiveGameContext context) {
+        finalizeExpiredDepartures(context);
+        for (long userId : List.copyOf(context.administrativeDepartingUserIds)) {
+            rooms.finalizeActiveGameDeparture(context.roomId, userId);
+            context.sessionMemberUserIds.remove(userId);
+            context.administrativeDepartingUserIds.remove(userId);
+        }
+    }
+
+    public boolean requestAdministrativeRemoval(long roomId, long userId) {
+        ActiveGameContext context = registry.findByRoom(roomId)
+                .orElseThrow(() -> new GameRuntimeException("GAME_NOT_ACTIVE"));
+        context.lock.lock();
+        try {
+            if (!context.sessionMemberUserIds.contains(userId)) throw new GameRuntimeException("NOT_GAME_PARTICIPANT");
+            if (!context.administrativeDepartingUserIds.add(userId)) return false;
+            rooms.markAdministrativeLeaving(roomId, userId);
+            if (context.handCompleted) finalizeDeferredDepartures(context);
+            return true;
+        } finally { context.lock.unlock(); }
+    }
+
+    public AdministrativeTermination requestAdministrativeTermination(long sessionId) {
+        ActiveGameContext context = registry.findBySession(sessionId)
+                .orElseThrow(() -> new GameRuntimeException("GAME_NOT_ACTIVE"));
+        context.lock.lock();
+        try {
+            if (context.sessionFinished || context.administrativeTerminationRequested)
+                return new AdministrativeTermination(false, false);
+            context.administrativeTerminationRequested = true;
+            if (context.handCompleted) {
+                finishAdministrativeTermination(context);
+                return new AdministrativeTermination(true, false);
+            }
+            return new AdministrativeTermination(true, true);
+        } finally { context.lock.unlock(); }
+    }
+
+    private void finishAdministrativeTermination(ActiveGameContext context) {
+        if (context.sessionFinished) return;
+        finalizeDeferredDepartures(context);
+        for (long userId : List.copyOf(context.sessionMemberUserIds)) {
+            rooms.finalizeActiveGameDeparture(context.roomId, userId);
+            context.sessionMemberUserIds.remove(userId);
+        }
+        sessions.finishSession(context.sessionId);
+        rooms.finishRoom(context.roomId);
+        context.sessionFinished = true;
+        registry.remove(context);
+    }
+
+    public record AdministrativeTermination(boolean changed, boolean deferred) {}
 
     private static boolean eligibleForNewHand(RoomGamePort.RoomSeat seat) {
         return seat.tableChips()>0&&(seat.state()==RoomPlayerState.PLAYING||seat.state()==RoomPlayerState.READY);
@@ -272,6 +342,8 @@ public class GameRuntimeService {
         rooms.synchronizeTableChips(c.roomId, c.state.players().stream()
                 .map(p -> new RoomGamePort.PlayerStack(p.userId(), p.tableChips())).toList());
         c.handCompleted = true;
+        finalizeDeferredDepartures(c);
+        if (c.administrativeTerminationRequested) finishAdministrativeTermination(c);
         return result;
     }
 

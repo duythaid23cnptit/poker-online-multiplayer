@@ -15,4 +15,6 @@ public final class AdminModels {private AdminModels(){}
  public record GameParticipant(long userId,String username,long netChips,long handsPlayed){}
  public record GameDetail(long gameSessionId,long roomId,String roomName,String status,Instant startedAt,Instant finishedAt,long handCount,List<GameParticipant> participants){}
  public record HandItem(long handId,long handNumber,Instant startedAt,Instant endedAt,long participantCount,long totalPotAwarded,String finalPhase,String endReason,String boardCards){}
+ public record MutationResponse(String status,long targetId,boolean changed,boolean deferred){}
+ public record AuditItem(long id,long adminUserId,String actionType,String targetType,Long targetId,String reason,java.util.Map<String,Object> metadata,Instant createdAt){}
 }

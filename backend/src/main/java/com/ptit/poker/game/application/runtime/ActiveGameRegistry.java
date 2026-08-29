@@ -26,4 +26,11 @@ class ActiveGameRegistry {
             finally { context.lock.unlock(); }
         }).findFirst();
     }
+    Optional<ActiveGameContext> findByRoom(long roomId) {
+        UUID id = byRoom.get(roomId);
+        return id == null ? Optional.empty() : Optional.ofNullable(byId.get(id));
+    }
+    Optional<ActiveGameContext> findBySession(long sessionId) {
+        return byId.values().stream().filter(context -> context.sessionId == sessionId).findFirst();
+    }
 }

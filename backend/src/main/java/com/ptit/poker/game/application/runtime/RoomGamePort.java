@@ -11,6 +11,8 @@ public interface RoomGamePort {
     void markDisconnected(long roomId, long userId);
     void markReconnected(long roomId, long userId);
     void finalizeActiveGameDeparture(long roomId, long userId);
+    void markAdministrativeLeaving(long roomId, long userId);
+    void finishRoom(long roomId);
 
     record RoomGameSnapshot(long roomId, long smallBlind, long bigBlind, List<RoomSeat> seats) {
         public RoomGameSnapshot { seats = List.copyOf(seats); }

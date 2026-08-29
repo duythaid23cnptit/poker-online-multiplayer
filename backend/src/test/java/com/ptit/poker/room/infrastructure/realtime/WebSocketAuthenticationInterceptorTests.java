@@ -54,6 +54,7 @@ class WebSocketAuthenticationInterceptorTests {
     @Test
     void roomSubscriptionRequiresActiveMembership() {
         AuthenticatedUser principal = new AuthenticatedUser(7L, "player", Role.PLAYER);
+        activeUser(7L);
         var authentication = new UsernamePasswordAuthenticationToken(principal, null, List.of());
         StompHeaderAccessor allowed = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
         allowed.setUser(authentication); allowed.setDestination("/topic/room/12"); allowed.setLeaveMutable(true);
@@ -69,6 +70,7 @@ class WebSocketAuthenticationInterceptorTests {
     @Test
     void gameSubscriptionRequiresRuntimeObservationRightsAndPrivateQueueIsOwnUserDestination() {
         AuthenticatedUser principal = new AuthenticatedUser(7L, "player", Role.PLAYER);
+        activeUser(7L);
         var authentication = new UsernamePasswordAuthenticationToken(principal, null, List.of());
         UUID gameId = UUID.randomUUID();
         when(games.canObserve(gameId, 7L)).thenReturn(true);
@@ -84,6 +86,25 @@ class WebSocketAuthenticationInterceptorTests {
         when(games.canObserve(gameId, 7L)).thenReturn(false);
         assertThatThrownBy(() -> interceptor.preSend(message(game), mock(org.springframework.messaging.MessageChannel.class)))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("Subscription forbidden");
+    }
+
+    @Test
+    void sendRevalidatesAccountStatusAfterConnect() {
+        AuthenticatedUser principal = new AuthenticatedUser(7L, "player", Role.PLAYER);
+        var authentication = new UsernamePasswordAuthenticationToken(principal, null, List.of());
+        UserEntity locked = mock(UserEntity.class);
+        when(locked.getAccountStatus()).thenReturn(AccountStatus.LOCKED);
+        when(users.findById(7L)).thenReturn(Optional.of(locked));
+        StompHeaderAccessor send = StompHeaderAccessor.create(StompCommand.SEND);
+        send.setUser(authentication); send.setDestination("/app/game/" + UUID.randomUUID() + "/action"); send.setLeaveMutable(true);
+        assertThatThrownBy(() -> interceptor.preSend(message(send), mock(org.springframework.messaging.MessageChannel.class)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Authentication required");
+    }
+
+    private void activeUser(long id) {
+        UserEntity user = mock(UserEntity.class);
+        when(user.getAccountStatus()).thenReturn(AccountStatus.ACTIVE);
+        when(users.findById(id)).thenReturn(Optional.of(user));
     }
 
     private static Message<byte[]> message(StompHeaderAccessor accessor) {

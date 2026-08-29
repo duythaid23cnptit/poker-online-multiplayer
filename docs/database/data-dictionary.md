@@ -141,3 +141,6 @@ needed.
 
 The rows are derived projections. Gameplay history in `game_sessions`,
 `poker_hands`, `hand_players`, `pots`, and `pot_awards` remains authoritative.
+## `admin_audit_log` (Flyway V9)
+
+Append-only record of successful administrative state changes. Columns are `id`, acting `admin_user_id`, whitelisted `action_type`, whitelisted `target_type`, optional `target_id`, bounded optional `reason`, optional `request_id`, safe `metadata_json`, and microsecond `created_at`. The acting user has a restrictive foreign key to `users`. Indexes support actor/time and target/time reads. No update/delete API exists; metadata must never contain credentials, tokens, private-room secrets, or cards.

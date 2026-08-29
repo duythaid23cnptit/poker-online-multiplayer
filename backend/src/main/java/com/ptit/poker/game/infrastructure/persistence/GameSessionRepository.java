@@ -10,4 +10,5 @@ public interface GameSessionRepository extends JpaRepository<GameSessionEntity, 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select session from GameSessionEntity session where session.id = :id")
     Optional<GameSessionEntity> findByIdForUpdate(Long id);
+    Optional<GameSessionEntity> findFirstByRoomIdAndStatusOrderByStartedAtDesc(Long roomId, GameSessionStatus status);
 }

@@ -161,6 +161,25 @@ class RoomWebSocketStompMySqlIntegrationTests {
     }
 
     @Test
+    void suspendedUserCannotConnectWithTokenIssuedWhileActive() throws Exception {
+        UserEntity player=user(1_000);String oldToken=jwt.createAccessToken(player);
+        player.lock();users.saveAndFlush(player);
+        ClientHandler rejected=new ClientHandler();connectAsync(oldToken,rejected);
+        assertThat(rejected.failure.get(5,TimeUnit.SECONDS)).isNotNull();
+    }
+
+    @Test
+    void alreadyConnectedSuspendedUserCannotSendOrSubscribe() throws Exception {
+        UserEntity player=user(1_000);ClientHandler sendHandler=new ClientHandler(),subscribeHandler=new ClientHandler();
+        StompSession sendSession=connect(player,sendHandler),subscribeSession=connect(player,subscribeHandler);
+        player.lock();users.saveAndFlush(player);
+        sendSession.send("/app/room/1/ready",Map.of("clientCommandId",UUID.randomUUID(),"ready",true));
+        subscribeSession.subscribe("/topic/lobby",noopHandler());
+        assertThat(sendHandler.failure.get(5,TimeUnit.SECONDS)).isNotNull();
+        assertThat(subscribeHandler.failure.get(5,TimeUnit.SECONDS)).isNotNull();
+    }
+
+    @Test
     void authenticatedPlayerSubscribesToLobbyAndReceivesRoomCreated() throws Exception {
         UserEntity player = user(1_000);
         ClientHandler clientHandler = new ClientHandler();
@@ -208,12 +227,16 @@ class RoomWebSocketStompMySqlIntegrationTests {
     private StompSession connect(UserEntity user) throws Exception { return connect(user, new ClientHandler()); }
 
     private StompSession connect(UserEntity user, ClientHandler handler) throws Exception {
+        return connect(jwt.createAccessToken(user),handler);
+    }
+    private StompSession connect(String token, ClientHandler handler) throws Exception {
         StompHeaders headers = new StompHeaders();
-        headers.add(HttpHeaders.AUTHORIZATION, "Bearer " + jwt.createAccessToken(user));
+        headers.add(HttpHeaders.AUTHORIZATION, "Bearer " + token);
         StompSession session = client().connectAsync(url(), new WebSocketHttpHeaders(), headers, handler)
                 .get(5, TimeUnit.SECONDS);
         sessions.add(session); return session;
     }
+    private void connectAsync(String token,ClientHandler handler){StompHeaders headers=new StompHeaders();headers.add(HttpHeaders.AUTHORIZATION,"Bearer "+token);client().connectAsync(url(),new WebSocketHttpHeaders(),headers,handler);}
 
     private void subscribeAndAwait(StompSession session, String destination, StompFrameHandler handler)
             throws Exception {

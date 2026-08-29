@@ -191,3 +191,15 @@ rooms support `search`, `status`, and `roomType`; games support `status`,
 `roomId`, `userId`, `from`, and `to`. Default ordering is deterministic and
 server-defined. Responses never include password hashes, tokens, private-room
 hashes, or hole cards.
+## Admin moderation (Phase 9B)
+
+All routes below require the current authenticated principal to have `ADMIN`; actor identifiers are never accepted from request data.
+
+- `POST /api/v1/admin/users/{userId}/suspend` changes `ACTIVE` to the established `LOCKED` status. Self-suspension returns 409. Repeating an effective suspension is an unchanged 200 response and creates no second audit row.
+- `POST /api/v1/admin/users/{userId}/reactivate` changes `LOCKED` to `ACTIVE`; an already-active user is unchanged and is not audited again.
+- `POST /api/v1/admin/rooms/{roomId}/players/{userId}/remove` cashes out an idle member immediately. During a hand it records a safe leave intent, rejects further voluntary actions, preserves commitments, and finalizes departure after settlement.
+- `POST /api/v1/admin/rooms/{roomId}/close` closes only a room without an active game; otherwise it returns 409 and requires explicit game termination first.
+- `POST /api/v1/admin/games/{gameSessionId}/terminate` finishes between hands immediately. During a hand it returns `TERMINATION_REQUESTED` with `deferred=true`, prevents another hand, lets authoritative settlement complete, then cashes out and finishes the session. The single `GAME_TERMINATED` audit row records acceptance of that request and carries `terminationStatus=REQUESTED`; it does not falsely claim boundary completion.
+- `GET /api/v1/admin/audit-log` supports `page`, `size`, `adminUserId`, `actionType`, `targetType`, `targetId`, `from`, and `to`; ordering is `createdAt DESC, id DESC`.
+
+Mutation bodies optionally contain `reason` (trimmed, blank-as-null, maximum 500 characters). Successful state changes and their audit row share the request transaction. Responses contain only status, target ID, changed, and deferred fields.

@@ -76,7 +76,7 @@ class MySqlPersistenceIntegrationTests {
         @Test
         void flywayAndHibernateValidateTheRequiredSchema() {
                 assertThat(flyway.info().current()).isNotNull();
-                assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("8");
+                assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("9");
 
                 Set<String> tables = Set.copyOf(jdbcTemplate.queryForList(
                                 "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()",

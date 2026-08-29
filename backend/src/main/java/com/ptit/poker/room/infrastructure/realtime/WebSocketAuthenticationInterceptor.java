@@ -41,10 +41,19 @@ public class WebSocketAuthenticationInterceptor implements ChannelInterceptor {
             accessor = StompHeaderAccessor.wrap(message);
         }
         if (accessor.getCommand() == StompCommand.CONNECT) authenticate(accessor);
+        if (accessor.getCommand() == StompCommand.SUBSCRIBE || accessor.getCommand() == StompCommand.SEND)
+            requireCurrentlyActive(accessor);
         if (accessor.getCommand() == StompCommand.SUBSCRIBE) authorizeSubscription(accessor);
         if (accessor.getCommand() == StompCommand.SEND && accessor.getUser() == null)
             throw new IllegalArgumentException("Authentication required");
         return message;
+    }
+
+    private void requireCurrentlyActive(StompHeaderAccessor accessor) {
+        if (!(accessor.getUser() instanceof org.springframework.security.core.Authentication authentication)
+                || !(authentication.getPrincipal() instanceof AuthenticatedUser principal)
+                || users.findById(principal.userId()).filter(user -> user.getAccountStatus() == AccountStatus.ACTIVE).isEmpty())
+            throw new IllegalArgumentException("Authentication required");
     }
 
     private void authenticate(StompHeaderAccessor accessor) {

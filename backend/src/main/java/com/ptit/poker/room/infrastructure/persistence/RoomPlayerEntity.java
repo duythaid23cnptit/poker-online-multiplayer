@@ -93,6 +93,11 @@ public class RoomPlayerEntity {
         playerState = RoomPlayerState.PLAYING;
     }
 
+    public void markLeaving() {
+        if (leftAt != null || seatNumber == null) throw new IllegalStateException("only an active seated player can leave gameplay");
+        playerState = RoomPlayerState.LEAVING;
+    }
+
     public void synchronizeTableChips(long chips) {
         if (chips < 0) throw new IllegalArgumentException("table chips must not be negative");
         tableChips = chips;

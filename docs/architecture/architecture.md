@@ -174,3 +174,8 @@ Overview counts all users, ACTIVE accounts, all rooms, WAITING/PLAYING open
 rooms, ACTIVE/FINISHED sessions, completed hands, and account-chip balances.
 List queries use joined projections or aggregate subqueries and avoid per-item
 repository loading.
+## Administrative moderation
+
+The admin application service orchestrates narrow user, room, game-runtime, and append-only audit ports. Database-only state and audit writes share one transaction. Active-game changes enter the existing per-game lock. They use safe-boundary termination/departure: current hands are never cancelled, fabricated, or economically rewritten.
+
+HTTP bearer authentication and STOMP CONNECT load current account state. Every later STOMP SEND/SUBSCRIBE also revalidates that the account remains ACTIVE, so a token or connected socket cannot retain mutation authority after suspension.

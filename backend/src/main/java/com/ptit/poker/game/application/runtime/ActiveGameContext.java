@@ -12,8 +12,9 @@ import java.util.concurrent.locks.ReentrantLock;
 final class ActiveGameContext {
     final UUID gameId; final long sessionId; final long roomId; final ReentrantLock lock = new ReentrantLock();
     long handNumber; long smallBlind; long bigBlind; GameState state; Deck deck; BettingRoundState round; HandHistoryHandle history;
-    boolean handCompleted; boolean sessionFinished; boolean failed;
+    boolean handCompleted; boolean sessionFinished; boolean failed; boolean administrativeTerminationRequested;
     final Set<Long> reconnectExpiredUsers = new HashSet<>();
+    final Set<Long> administrativeDepartingUserIds = new HashSet<>();
     final Set<Long> sessionMemberUserIds = new HashSet<>();
     ActiveGameContext(UUID gameId, long sessionId, long roomId) {
         this.gameId = gameId; this.sessionId = sessionId; this.roomId = roomId;

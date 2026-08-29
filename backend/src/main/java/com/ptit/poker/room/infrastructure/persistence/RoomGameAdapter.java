@@ -59,10 +59,18 @@ public class RoomGameAdapter implements RoomGamePort {
     @Override @Transactional
     public void finalizeActiveGameDeparture(long roomId,long userId) {
         RoomPlayerEntity member=require(roomId,userId);
+        if (!member.isActive()) return;
         long cashOut=member.leave(clock.instant());
         accounts.credit(userId,cashOut);
         events.publishEvent(new RoomChangedEvent(roomId,RoomEventType.PLAYER_LEFT,
                 Map.of("userId",userId),RoomEventType.PLAYER_COUNT_CHANGED,Map.of("roomId",roomId)));
+    }
+    @Override @Transactional
+    public void markAdministrativeLeaving(long roomId, long userId) { require(roomId, userId).markLeaving(); }
+    @Override @Transactional
+    public void finishRoom(long roomId) {
+        rooms.findByIdForUpdate(roomId).orElseThrow(() -> new IllegalArgumentException("room not found"))
+                .finish(clock.instant());
     }
     private RoomPlayerEntity require(long roomId, long userId) {
         return players.findByRoomIdAndUserIdForUpdate(roomId, userId)

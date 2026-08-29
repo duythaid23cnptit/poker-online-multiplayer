@@ -101,3 +101,6 @@ through `AdminReadPort`. Its JDBC adapter depends on existing schemas but does
 not expose feature JPA entities. Other modules do not depend on admin. Live
 runtime access is intentionally absent from Phase 9A; any future need requires
 a narrow runtime query port rather than `ActiveGameContext` access.
+### Admin moderation boundaries
+
+`AdminController` depends only on admin application services. `AdminUserModerationPort`, `AdminRoomModerationPort`, `AdminGameModerationPort`, and `AdminAuditPort` isolate persistence and runtime adapters. The admin module may coordinate authoritative room/game use cases through these ports; it does not edit poker history, statistics, rankings, analytics, chips, or engine mathematics directly.

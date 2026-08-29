@@ -103,5 +103,10 @@ public class RoomEntity {
         lastActivityAt = activityAt;
     }
 
+    public void finish(Instant activityAt) {
+        status = RoomStatus.FINISHED;
+        lastActivityAt = activityAt;
+    }
+
     public void recordActivity(Instant activityAt) { lastActivityAt = activityAt; }
 }

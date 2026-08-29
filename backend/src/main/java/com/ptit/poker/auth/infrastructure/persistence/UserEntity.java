@@ -103,6 +103,18 @@ public class UserEntity {
         this.lastLoginAt = loginAt;
     }
 
+    public boolean lock() {
+        if (accountStatus == AccountStatus.LOCKED) return false;
+        accountStatus = AccountStatus.LOCKED;
+        return true;
+    }
+
+    public boolean reactivate() {
+        if (accountStatus == AccountStatus.ACTIVE) return false;
+        accountStatus = AccountStatus.ACTIVE;
+        return true;
+    }
+
     public void debitAccountChips(long amount) {
         if (amount <= 0 || accountChips < amount) {
             throw new IllegalArgumentException("Insufficient account chips");

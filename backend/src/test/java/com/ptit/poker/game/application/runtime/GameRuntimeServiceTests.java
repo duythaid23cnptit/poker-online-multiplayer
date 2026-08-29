@@ -482,6 +482,32 @@ class GameRuntimeServiceTests {
                 .doesNotContain(3L);
     }
 
+    @Test
+    void administrativeRemovalPreservesCurrentHandAndFinalizesAtSettlementBoundary() {
+        GameRuntimeView started=startHeadsUp(99);
+        assertThat(service.requestAdministrativeRemoval(99,2)).isTrue();
+        assertThat(service.requestAdministrativeRemoval(99,2)).isFalse();
+        assertThatThrownBy(()->service.applyAction(started.gameId(),2,intent(started,PokerActionType.FOLD,0)))
+                .isInstanceOf(GameRuntimeException.class);
+        GameRuntimeView completed=service.applyAction(started.gameId(),started.currentTurnUserId(),intent(started,PokerActionType.FOLD,0));
+        assertThat(completed.handCompleted()).isTrue();
+        verify(rooms).markAdministrativeLeaving(99,2);
+        verify(rooms).finalizeActiveGameDeparture(99,2);
+    }
+
+    @Test
+    void administrativeTerminationDuringHandSettlesThenFinishesWithoutNextHand() {
+        GameRuntimeView started=startHeadsUp(100);
+        var request=service.requestAdministrativeTermination(started.gameSessionId());
+        assertThat(request.changed()).isTrue();assertThat(request.deferred()).isTrue();
+        GameRuntimeView completed=service.applyAction(started.gameId(),started.currentTurnUserId(),intent(started,PokerActionType.FOLD,0));
+        assertThat(completed.handCompleted()).isTrue();assertThat(completed.sessionFinished()).isTrue();
+        verify(history).completeHand(any(),any(),any(),eq(HandCompletionReason.ALL_OTHERS_FOLDED));
+        verify(sessions).finishSession(started.gameSessionId());verify(rooms).finishRoom(100);
+        verify(rooms,times(2)).finalizeActiveGameDeparture(eq(100L),anyLong());
+        assertThatThrownBy(()->service.startNextHand(started.gameId())).isInstanceOf(GameRuntimeException.class);
+    }
+
     private static void await(CountDownLatch latch){try{latch.await();}catch(InterruptedException failure){Thread.currentThread().interrupt();throw new AssertionError(failure);}}
 
     private GameRuntimeView checkAround(GameRuntimeView view) {
