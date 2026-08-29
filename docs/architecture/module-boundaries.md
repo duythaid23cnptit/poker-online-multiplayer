@@ -87,3 +87,10 @@ The arrows describe allowed contract-level use, not permission to import interna
 ### Game to analytics
 
 Game publishes the narrow `GameSessionFinishedEvent`; analytics handles it after commit through `PlayerStatisticsRefreshPort`. Analytics reads history through `PlayerStatisticsHistoryPort` and never mutates game entities or repositories. Game does not depend on analytics persistence.
+# Time-bucket analytics boundary
+
+The analytics application layer reads completed-hand and pot-award facts only
+through `TimeBucketAnalyticsHistoryPort`. Its JDBC adapter may query gameplay
+tables read-only; analytics does not depend on game repositories or expose game
+or persistence entities. The game module publishes `GameSessionFinishedEvent`
+and does not call analytics directly.

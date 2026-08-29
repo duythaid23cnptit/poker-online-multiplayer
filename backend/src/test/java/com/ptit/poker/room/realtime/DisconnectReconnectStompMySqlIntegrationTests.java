@@ -133,6 +133,8 @@ class DisconnectReconnectStompMySqlIntegrationTests {
         var departed=member(f);assertThat(departed.getSeatNumber()).isNull();assertThat(departed.getTableChips()).isZero();
         assertThat(users.findById(f.second().getId()).orElseThrow().getAccountChips()).isEqualTo(accountBefore+returned);
         assertThat(hands.findAllByGameSessionIdOrderByHandNumber(started.gameSessionId())).hasSize(1);
+        awaitTrue(()->{try{runtime.currentView(started.gameId());return false;}catch(GameRuntimeException expected){return true;}},
+                "runtime removed after finished session");
         assertThatThrownBy(()->runtime.currentView(started.gameId())).isInstanceOf(GameRuntimeException.class);
         StompSession late=connect(f.second());QueueFrames latePrivate=new QueueFrames();subscribe(late,"/user/queue/private",latePrivate);
         assertThat(latePrivate.poll(500,TimeUnit.MILLISECONDS)).isNull();

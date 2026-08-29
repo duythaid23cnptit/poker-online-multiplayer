@@ -129,3 +129,15 @@ Gameplay persistence retains the distinction that one Game Session contains many
 ## Rankings (`player_rankings`, `ranking_history`)
 
 Flyway V7 adds current competitive ratings and immutable per-session changes. Ratings start at 1000, never fall below zero, and history is unique by `(user_id, game_session_id)`. Leaderboard rank is computed, not stored.
+# Time-bucket analytics (Flyway V8)
+
+`daily_statistics` is keyed by `(user_id, stat_date)` and `weekly_statistics` by
+`(user_id, week_start_date)`. Both store non-negative hand-result counters,
+positive/negative chip totals, signed `net_chips`, the largest actual pot award,
+per-session playing-time approximation, distinct participating sessions, and
+`updated_at`. Both user foreign keys cascade on user deletion. The composite
+primary keys support current-player date-range reads; no global date index is
+needed.
+
+The rows are derived projections. Gameplay history in `game_sessions`,
+`poker_hands`, `hand_players`, `pots`, and `pot_awards` remains authoritative.

@@ -26,6 +26,8 @@ app:
       refresh-token-expiration: ${JWT_REFRESH_TOKEN_EXPIRATION:30d}
 
 poker:
+  analytics:
+    zone-id: ${POKER_ANALYTICS_ZONE_ID:Asia/Bangkok}
   game:
     turn-timeout: ${POKER_GAME_TURN_TIMEOUT:30s}
     timer-update-cadence: ${POKER_GAME_TIMER_UPDATE_CADENCE:1s}

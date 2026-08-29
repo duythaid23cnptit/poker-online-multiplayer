@@ -147,3 +147,18 @@ The analytics module reads completed game history through a narrow read port and
 ## Multiplayer Elo ranking
 
 After a game session commits, ranking independently reads participant session-net results. With initial rating 1000 and K=32, every player is compared pairwise against every opponent, expected scores use the standard 400-point logistic formula, actual scores are 1/0.5/0, and averages produce one simultaneously calculated rounded delta. Competition placement uses session net; the rating floor is zero. Participant rows are locked in user-ID order and history makes a session idempotent.
+# Daily and weekly analytics projection
+
+Phase 8C consumes `GameSessionFinishedEvent` independently after commit. It
+discovers affected player/day and player/week keys, orders them by user, bucket
+type, and date, and recomputes each complete projection from authoritative
+gameplay history. A concrete projection row is initialized and point-locked
+before reading history, preventing a slower stale writer from overwriting a
+newer aggregate. Listener failure is logged and cannot roll back gameplay,
+statistics, or ranking.
+
+The business timezone is `Asia/Bangkok`. Hands belong to the local date of
+`poker_hands.ended_at`; weeks begin Monday. A zero-net completed hand is counted
+as `handsTied`. Playing time sums, per represented session, the interval from
+its earliest hand start to latest hand finish within the bucket, avoiding gaps
+between unrelated sessions.

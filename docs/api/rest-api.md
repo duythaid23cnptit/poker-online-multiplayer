@@ -164,3 +164,17 @@ Definitions: a game is a finished game session containing at least one completed
 ## Rankings
 
 Authenticated endpoints are `GET /api/v1/rankings/me`, `GET /api/v1/rankings/leaderboard?page=0&size=20`, and `GET /api/v1/rankings/me/history?page=0&size=20`. Sizes are limited to 1–100. Unrated users return rating/peak 1000, zero games, and null rank; they are excluded from the leaderboard.
+# Player time-bucket analytics
+
+Authenticated current-player endpoints are:
+
+- `GET /api/v1/analytics/me/daily?from=YYYY-MM-DD&to=YYYY-MM-DD` (maximum 366
+  inclusive calendar days).
+- `GET /api/v1/analytics/me/weekly?from=YYYY-MM-DD&to=YYYY-MM-DD` (both dates
+  normalize to their containing Monday; maximum 104 inclusive weeks).
+- `GET /api/v1/analytics/me/summary` for today's and the current Monday-start
+  week's buckets.
+
+Range endpoints return only stored data-bearing buckets in ascending order.
+Summary returns explicit zero-valued DTOs when current data is absent without
+persisting zero rows. Identity always comes from the JWT principal.
