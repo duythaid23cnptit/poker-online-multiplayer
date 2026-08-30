@@ -120,7 +120,7 @@ All gameplay chip values have database checks, seats are restricted to 1–9, en
 
 ## Planned tables
 
-`chat_messages` remains planned. Friendship persistence and the statistics, ranking, and time-bucket projection tables are implemented by later migrations described below.
+No additional social persistence table is reserved by Phase 10B.1. Friendship persistence and the statistics, ranking, and time-bucket projection tables are implemented by later migrations described below.
 
 Gameplay persistence retains the distinction that one Game Session contains many Poker Hands. Runtime hand finalization and transaction orchestration are intentionally not implemented by Phase 6A.
 ## Player statistics (`player_statistics`)
@@ -160,3 +160,16 @@ Append-only record of successful administrative state changes. Columns are `id`,
 | `version` | `BIGINT` | `0` | Optimistic transition version |
 
 `uk_friendships_canonical_pair(lower_user_id, higher_user_id)` is the authoritative one-row-per-unordered-pair invariant. Checks reject self-pairs, noncanonical order, and unknown statuses. All four user columns reference `users.id` with restrictive deletion. Incoming and outgoing request reads use `(recipient_user_id, status, created_at)` and `(requester_user_id, status, created_at)` indexes; accepted symmetric lookups can use MySQL index merge over those participant indexes. Generated canonical columns are mapped read-only by JPA.
+
+## `chat_messages` (Flyway V11) — owner: social/chat
+
+| Column | Type | Null/default | Meaning |
+|---|---|---|---|
+| `id` | `BIGINT` | PK, auto-increment | Authoritative message ID and keyset-order key |
+| `room_id` | `BIGINT` | required, FK | Owning room |
+| `sender_user_id` | `BIGINT` | required, FK | Authoritative sender resolved from the principal |
+| `client_message_id` | `CHAR(36)` | required | Client UUID used only for idempotency |
+| `content` | `VARCHAR(500)` | required | Normalized plain Unicode text |
+| `created_at` | `DATETIME(6)` | current UTC time | Authoritative persistence instant |
+
+`pk_chat_messages` owns identity. `fk_chat_messages_room` and `fk_chat_messages_sender` both restrict deletion to retain history. `uk_chat_messages_client_command(room_id, sender_user_id, client_message_id)` prevents duplicate retries even under concurrency. `chk_chat_messages_content_length` rejects empty or over-500-code-point values at the MySQL character level; application validation additionally strips edges, rejects blank/control-character text, and counts Unicode code points. `idx_chat_messages_room_id(room_id, id)` supports `room_id = ? AND id < ? ORDER BY id DESC LIMIT ?`. Messages are immutable, have no TTL, and contain no profile snapshot or secrets.

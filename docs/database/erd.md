@@ -111,7 +111,7 @@ Board and private-card snapshots use deterministic comma-separated card codes su
 
 Flyway `V10` adds one social-owned `friendships` row per unordered pair of users. Original request direction is retained in `requester_user_id` and `recipient_user_id`; stored generated `lower_user_id` and `higher_user_id` columns canonicalize the pair with `LEAST`/`GREATEST`. Their unique constraint prevents duplicate same-direction and opposite-direction rows, including concurrent inserts.
 
-The persisted states are exactly `PENDING`, `ACCEPTED`, and `REJECTED`. Rejected pairs reuse the row for a later request, and removal of an accepted friendship will hard-delete it. `chat_messages` remains planned and is not implemented by Phase 10A.1.
+The persisted states are exactly `PENDING`, `ACCEPTED`, and `REJECTED`. Rejected pairs reuse the row for a later request, and removal of an accepted friendship will hard-delete it.
 
 ```mermaid
 erDiagram
@@ -127,6 +127,24 @@ erDiagram
     datetime created_at
     datetime responded_at
     bigint version
+  }
+```
+
+## Phase 10B.1 room-chat schema
+
+Flyway `V11` adds immutable, retained room-chat messages owned by `social/chat`. Each message references exactly one room and sender with restrictive deletion. The composite unique key on `(room_id, sender_user_id, client_message_id)` is the final concurrent retry barrier. `(room_id, id)` supports descending keyset history reads; content is non-indexed `utf8mb4 VARCHAR(500)` with an obvious 1–500 database length check. Application normalization and a 500-Unicode-code-point limit remain stricter than the SQL check.
+
+```mermaid
+erDiagram
+  ROOMS ||--o{ CHAT_MESSAGES : contains
+  USERS ||--o{ CHAT_MESSAGES : sends
+  CHAT_MESSAGES {
+    bigint id PK
+    bigint room_id FK
+    bigint sender_user_id FK
+    char client_message_id UK
+    varchar content
+    datetime created_at
   }
 ```
 

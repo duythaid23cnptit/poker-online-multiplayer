@@ -64,6 +64,10 @@ Incoming and outgoing lists contain only pending requests ordered by creation ti
 
 Phase 10A.3 friendship notifications are a best-effort convenience after the database transaction commits. Offline clients and clients that miss a frame recover authoritative state through `GET /friend-requests` and `GET /friends`; REST/database state never depends on broker delivery.
 
+Phase 10B.1 freezes, but does not yet implement, `GET /api/v1/rooms/{roomId}/messages`. Only a current active member (`room_players.left_at IS NULL`), including a spectator, may read normal room history. Query parameters are optional `beforeMessageId` and `limit` (default 50, maximum 100). Absence of a cursor fetches the latest page; a cursor fetches only IDs strictly less than it. Storage is queried by `id DESC`, while each response page is returned chronologically (`id ASC`) with `nextBeforeMessageId` equal to the oldest returned ID and an explicit `hasMore`. This keyset contract avoids OFFSET duplicates/skips while realtime messages arrive.
+
+The planned message DTO contains `messageId`, `roomId`, `clientMessageId`, normalized `content`, `createdAt`, and safe `sender { userId, displayName, avatarUrl }`. It excludes username, email, role, chips, credentials/tokens, room passwords/hashes, and cards. Persisted messages are immutable and retained without automatic TTL; Phase 10B has no edit/delete endpoint. REST history is the recovery source for best-effort STOMP delivery.
+
 ## Lobby and rooms
 
 Phase 4 uses authenticated `/api/v1/rooms` endpoints. All identities come from the JWT principal; requests never accept an owner or member user ID.
