@@ -46,7 +46,7 @@ class FriendshipPersistenceMySqlIntegrationTests {
     @Test
     void flywayV10CreatesFriendshipsAndHibernateValidatesIt() {
         assertThat(flyway.info().current()).isNotNull();
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("10");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("11");
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='friendships'",
                 Integer.class)).isEqualTo(1);

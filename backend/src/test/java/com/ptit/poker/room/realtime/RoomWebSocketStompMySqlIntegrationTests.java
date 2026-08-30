@@ -116,7 +116,7 @@ class RoomWebSocketStompMySqlIntegrationTests {
             if (session.isConnected()) {
                 session.disconnect();
             }
-        } catch (MessageDeliveryException exception) {
+        } catch (MessageDeliveryException | IllegalStateException exception) {
             if (!isAlreadyClosedWebSocket(exception)) {
                 throw exception;
             }
@@ -137,6 +137,9 @@ class RoomWebSocketStompMySqlIntegrationTests {
                 String message = current.getMessage();
                 if (message != null) {
                     String normalized = message.toLowerCase(java.util.Locale.ROOT);
+                    if (normalized.equals("connection closed")) {
+                        return true;
+                    }
                     if (normalized.contains("session")
                             && normalized.contains("closed")
                             && (normalized.contains("websocket") || normalized.contains("web socket"))) {
