@@ -2,6 +2,7 @@ package com.ptit.poker.social.application;
 
 import com.ptit.poker.social.domain.FriendshipStatus;
 import org.springframework.context.annotation.Profile;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,11 +19,14 @@ public class FriendshipService {
     private final FriendshipPersistencePort friendships;
     private final SocialPlayerQueryPort players;
     private final Clock clock;
+    private final ApplicationEventPublisher events;
 
-    public FriendshipService(FriendshipPersistencePort friendships, SocialPlayerQueryPort players, Clock clock) {
+    public FriendshipService(FriendshipPersistencePort friendships, SocialPlayerQueryPort players, Clock clock,
+                             ApplicationEventPublisher events) {
         this.friendships = friendships;
         this.players = players;
         this.clock = clock;
+        this.events = events;
     }
 
     @Transactional
@@ -36,6 +40,8 @@ public class FriendshipService {
         if (friendships.insertPending(requesterUserId, recipientUserId, now)) {
             FriendshipRecord inserted = friendships.findCanonicalPairForUpdate(requesterUserId, recipientUserId)
                     .orElseThrow(FriendshipException::internalPersistence);
+            requestNotification(FriendshipNotificationType.FRIEND_REQUEST_RECEIVED,
+                    recipientUserId, requesterUserId, inserted.id(), now);
             return new FriendshipSendResult(toView(inserted, requesterUserId, Map.of(recipient.userId(), recipient)), true);
         }
 
@@ -44,13 +50,21 @@ public class FriendshipService {
         FriendshipRecord result = switch (existing.status()) {
             case ACCEPTED -> throw FriendshipException.conflict(
                     "FRIENDSHIP_ALREADY_EXISTS", "The players are already friends");
-            case REJECTED -> friendships.reopen(existing.id(), requesterUserId, recipientUserId, now);
+            case REJECTED -> {
+                FriendshipRecord reopened = friendships.reopen(existing.id(), requesterUserId, recipientUserId, now);
+                requestNotification(FriendshipNotificationType.FRIEND_REQUEST_RECEIVED,
+                        recipientUserId, requesterUserId, reopened.id(), now);
+                yield reopened;
+            }
             case PENDING -> {
                 if (existing.requesterUserId() == requesterUserId) {
                     throw FriendshipException.conflict(
                             "FRIEND_REQUEST_ALREADY_EXISTS", "A pending friend request already exists");
                 }
-                yield friendships.transition(existing.id(), FriendshipStatus.ACCEPTED, now);
+                FriendshipRecord accepted = friendships.transition(existing.id(), FriendshipStatus.ACCEPTED, now);
+                requestNotification(FriendshipNotificationType.FRIEND_REQUEST_ACCEPTED,
+                        existing.requesterUserId(), requesterUserId, accepted.id(), now);
+                yield accepted;
             }
         };
         return new FriendshipSendResult(toView(result, requesterUserId, Map.of(recipient.userId(), recipient)), false);
@@ -81,9 +95,13 @@ public class FriendshipService {
 
     @Transactional
     public void removeFriend(long userId, long otherUserId) {
+        SocialPlayerQueryPort.SafePlayerSummary actor = safePlayer(userId);
+        Instant now = clock.instant();
         if (!friendships.deleteAcceptedPair(userId, otherUserId)) {
             throw FriendshipException.notFound("FRIENDSHIP_NOT_FOUND", "Friendship was not found");
         }
+        events.publishEvent(new FriendshipNotificationRequested(
+                FriendshipNotificationType.FRIEND_REMOVED, otherUserId, actor, null, now));
     }
 
     private FriendshipView respond(long userId, long requestId, FriendshipStatus response) {
@@ -96,8 +114,24 @@ public class FriendshipService {
         if (request.status() != FriendshipStatus.PENDING) {
             throw FriendshipException.conflict("FRIEND_REQUEST_NOT_PENDING", "Friend request is no longer pending");
         }
-        FriendshipRecord updated = friendships.transition(request.id(), response, clock.instant());
+        Instant now = clock.instant();
+        FriendshipRecord updated = friendships.transition(request.id(), response, now);
+        FriendshipNotificationType notificationType = response == FriendshipStatus.ACCEPTED
+                ? FriendshipNotificationType.FRIEND_REQUEST_ACCEPTED
+                : FriendshipNotificationType.FRIEND_REQUEST_REJECTED;
+        requestNotification(notificationType, request.requesterUserId(), userId, request.id(), now);
         return toViews(List.of(updated), userId, false).getFirst();
+    }
+
+    private void requestNotification(FriendshipNotificationType type, long recipientUserId,
+                                     long actorUserId, Long requestId, Instant occurredAt) {
+        events.publishEvent(new FriendshipNotificationRequested(
+                type, recipientUserId, safePlayer(actorUserId), requestId, occurredAt));
+    }
+
+    private SocialPlayerQueryPort.SafePlayerSummary safePlayer(long userId) {
+        return players.findSafePlayerSummaries(List.of(userId)).values().stream().findFirst()
+                .orElseThrow(FriendshipException::internalPersistence);
     }
 
     private List<FriendshipView> toViews(List<FriendshipRecord> records, long userId, boolean sortFriends) {

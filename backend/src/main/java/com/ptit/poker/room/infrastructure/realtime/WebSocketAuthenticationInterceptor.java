@@ -76,6 +76,7 @@ public class WebSocketAuthenticationInterceptor implements ChannelInterceptor {
         String destination = accessor.getDestination();
         if ("/topic/lobby".equals(destination)) return;
         if ("/user/queue/private".equals(destination)) return;
+        if ("/user/queue/notifications".equals(destination)) return;
         AuthenticatedUser user = (AuthenticatedUser) ((org.springframework.security.core.Authentication) accessor.getUser()).getPrincipal();
         if (destination != null && destination.startsWith("/topic/game/")) {
             UUID gameId;

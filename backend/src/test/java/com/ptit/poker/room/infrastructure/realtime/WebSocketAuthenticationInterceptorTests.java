@@ -83,6 +83,17 @@ class WebSocketAuthenticationInterceptorTests {
         privateQueue.setUser(authentication); privateQueue.setDestination("/user/queue/private"); privateQueue.setLeaveMutable(true);
         assertThat(interceptor.preSend(message(privateQueue), mock(org.springframework.messaging.MessageChannel.class))).isNotNull();
 
+        StompHeaderAccessor notifications = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        notifications.setUser(authentication); notifications.setDestination("/user/queue/notifications"); notifications.setLeaveMutable(true);
+        assertThat(interceptor.preSend(message(notifications), mock(org.springframework.messaging.MessageChannel.class))).isNotNull();
+
+        StompHeaderAccessor forgedNotifications = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        forgedNotifications.setUser(authentication);
+        forgedNotifications.setDestination("/user/player-two/queue/notifications");
+        forgedNotifications.setLeaveMutable(true);
+        assertThatThrownBy(() -> interceptor.preSend(message(forgedNotifications), mock(org.springframework.messaging.MessageChannel.class)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Subscription forbidden");
+
         when(games.canObserve(gameId, 7L)).thenReturn(false);
         assertThatThrownBy(() -> interceptor.preSend(message(game), mock(org.springframework.messaging.MessageChannel.class)))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("Subscription forbidden");

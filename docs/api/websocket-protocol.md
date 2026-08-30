@@ -123,6 +123,8 @@ Public events never reveal unrevealed hole cards, deck order, private authentica
 
 `/user/queue/notifications` carries friend requests/decisions, invitations if added, and relevant account notifications. Spectators never receive `HOLE_CARDS_DEALT`; a seated player receives only their own cards.
 
+Phase 10A.3 uses `/user/queue/notifications` as an authenticated private queue. Its envelope is `{ protocolVersion: 1, eventId, type, occurredAt, payload }`; `payload` contains the friendship `requestId` when applicable and only the actor's safe player projection (`userId`, `displayName`, optional `avatarUrl`). Types are `FRIEND_REQUEST_RECEIVED`, `FRIEND_REQUEST_ACCEPTED`, `FRIEND_REQUEST_REJECTED`, and `FRIEND_REMOVED`. A new or reopened request notifies its recipient; accept/reject notifies the original requester; remove notifies the other participant. A crossed request sends only `FRIEND_REQUEST_ACCEPTED` to the original requester. Frames are emitted only after commit, never for conflicts, authorization failures, no-ops, or rolled-back work. Delivery is best effort rather than durable; clients reconcile with the friendship REST endpoints after reconnect.
+
 ## Ordering, duplicates, and acknowledgements
 
 The game serialization boundary defines event order for one game. `stateVersion`, `eventId`, and command correlation permit gap/duplicate detection. Transport delivery is treated as at-least-once or lossy across disconnects, not exactly-once. Correctness comes from idempotent commands and authoritative snapshots.

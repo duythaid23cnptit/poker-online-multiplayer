@@ -4,7 +4,7 @@ A university Network Programming project for real-time multiplayer Texas Hold'em
 
 ## Current status
 
-Phases 0 through 9B are frozen, including authentication, rooms, the authoritative Poker Engine and realtime runtime, gameplay history, reconnect/timers, statistics, rankings, analytics, and audited admin moderation. Phase 10A.1 freezes friendship rules and the Flyway V10 schema; Phase 10A.2 implements the authenticated friendship REST lifecycle. Social notifications, chat, and the full frontend remain later work.
+Phases 0 through 9B are frozen, including authentication, rooms, the authoritative Poker Engine and realtime runtime, gameplay history, reconnect/timers, statistics, rankings, analytics, and audited admin moderation. Phase 10A.1 freezes friendship rules and the Flyway V10 schema; Phase 10A.2 implements the authenticated friendship REST lifecycle; Phase 10A.3 adds private, post-commit friendship notifications. Chat and the full frontend remain later work.
 
 The approved baseline distinguishes persistent Account Chips from Table Chips transferred through server-controlled buy-in/cash-out, and distinguishes a continuous Game Session from each Poker Hand it contains. Room/player lifecycle, 60-second reconnect handling, and authoritative timeout/leave behavior are specified in the architecture documents.
 
