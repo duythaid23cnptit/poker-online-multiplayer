@@ -4,7 +4,7 @@ A university Network Programming project for real-time multiplayer Texas Hold'em
 
 ## Current status
 
-Phases 0 through 9B and 10A are frozen, including friendship REST and private post-commit notifications. Phase 10B.1 freezes the room-chat contract and Flyway V11 storage only; chat REST history and realtime delivery remain planned for 10B.2 and 10B.3. The full frontend remains later work.
+Phases 0 through 9B, 10A, 10B.1, and 10B.2 are frozen. Phase 10B.3 implements authenticated, persisted, post-commit room-chat delivery over STOMP; real-MySQL/STOMP validation remains required before freezing it. Chat REST history and the full frontend remain later work.
 
 The approved baseline distinguishes persistent Account Chips from Table Chips transferred through server-controlled buy-in/cash-out, and distinguishes a continuous Game Session from each Poker Hand it contains. Room/player lifecycle, 60-second reconnect handling, and authoritative timeout/leave behavior are specified in the architecture documents.
 

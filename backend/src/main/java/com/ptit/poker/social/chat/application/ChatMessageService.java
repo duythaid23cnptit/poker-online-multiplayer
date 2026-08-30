@@ -4,6 +4,7 @@ import com.ptit.poker.social.application.SocialPlayerQueryPort;
 import com.ptit.poker.social.chat.domain.ChatMessageContent;
 import com.ptit.poker.social.chat.domain.ClientMessageId;
 import org.springframework.context.annotation.Profile;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,13 +19,15 @@ public class ChatMessageService {
     private final ChatRoomAccessPort rooms;
     private final SocialPlayerQueryPort players;
     private final Clock clock;
+    private final ApplicationEventPublisher events;
 
     public ChatMessageService(ChatMessagePersistencePort messages, ChatRoomAccessPort rooms,
-                              SocialPlayerQueryPort players, Clock clock) {
+                              SocialPlayerQueryPort players, Clock clock, ApplicationEventPublisher events) {
         this.messages = messages;
         this.rooms = rooms;
         this.players = players;
         this.clock = clock;
+        this.events = events;
     }
 
     @Transactional
@@ -46,9 +49,11 @@ public class ChatMessageService {
 
         String commandValue = command.toString();
         ChatMessageRecord record;
+        boolean created = false;
         Instant createdAt = clock.instant();
         try {
             record = messages.insert(roomId, authenticatedUserId, commandValue, normalized.value(), createdAt);
+            created = true;
         } catch (DuplicateKeyException duplicate) {
             if (!isClientCommandCollision(duplicate)) throw duplicate;
             record = messages.findByCommandKeyForUpdate(roomId, authenticatedUserId, commandValue)
@@ -57,7 +62,9 @@ public class ChatMessageService {
                 throw ChatMessageException.conflict("Client message ID was already used with different content");
             }
         }
-        return toView(record);
+        ChatMessageView result = toView(record);
+        if (created) events.publishEvent(new ChatMessageCreated(result));
+        return result;
     }
 
     private static boolean isClientCommandCollision(Throwable failure) {

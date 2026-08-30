@@ -3,6 +3,7 @@ package com.ptit.poker.social.chat.application;
 import com.ptit.poker.social.application.SocialPlayerQueryPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -27,6 +28,7 @@ class ChatMessageServiceTests {
     private ChatRoomAccessPort rooms;
     private SocialPlayerQueryPort players;
     private ChatMessageService service;
+    private ApplicationEventPublisher events;
     private final UUID command = UUID.randomUUID();
     private final SocialPlayerQueryPort.SafePlayerSummary sender =
             new SocialPlayerQueryPort.SafePlayerSummary(7, "Alpha", "/avatar.png");
@@ -36,7 +38,8 @@ class ChatMessageServiceTests {
         messages = mock(ChatMessagePersistencePort.class);
         rooms = mock(ChatRoomAccessPort.class);
         players = mock(SocialPlayerQueryPort.class);
-        service = new ChatMessageService(messages, rooms, players, Clock.fixed(NOW, ZoneOffset.UTC));
+        events = mock(ApplicationEventPublisher.class);
+        service = new ChatMessageService(messages, rooms, players, Clock.fixed(NOW, ZoneOffset.UTC), events);
         when(rooms.find(12, 7)).thenReturn(Optional.of(new ChatRoomAccessPort.RoomAccess(
                 12, false, true, true)));
         when(players.findSafePlayerSummaries(any())).thenReturn(Map.of(7L, sender));
@@ -50,6 +53,7 @@ class ChatMessageServiceTests {
         ChatMessageView result = service.sendMessage(7, 12, command.toString(), "  Hello world  ");
 
         assertThat(result).isEqualTo(new ChatMessageView(99, 12, command.toString(), "Hello world", NOW, sender));
+        verify(events).publishEvent(new ChatMessageCreated(result));
     }
 
     @Test
@@ -102,6 +106,7 @@ class ChatMessageServiceTests {
         when(messages.findByCommandKeyForUpdate(12, 7, command.toString())).thenReturn(Optional.of(existing));
 
         assertThat(service.sendMessage(7, 12, command.toString(), " Hello ").messageId()).isEqualTo(99);
+        verify(events, never()).publishEvent(any());
     }
 
     @Test

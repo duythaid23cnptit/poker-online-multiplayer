@@ -74,7 +74,7 @@ The handler ignores client identity/state fields and resolves membership from th
 | Destination | Command | Required payload |
 |---|---|---|
 | `/app/room/{roomId}/ready` | `SET_READY` | `clientCommandId`, `ready` |
-| `/app/room/{roomId}/chat` | `SEND_CHAT` (planned Phase 10B.3) | `clientMessageId`, `content` |
+| `/app/room/{roomId}/chat` | `SEND_CHAT` (Phase 10B.3) | `clientMessageId`, `content` |
 | `/app/game/{gameId}/action` | `PLAYER_ACTION` | `clientActionId`, `turnId`, `expectedStateVersion`, `action`, optional `amount` |
 
 Poker `action` is one of `FOLD`, `CHECK`, `CALL`, `BET`, `RAISE`, or `ALL_IN`. Amount semantics must be fixed before implementation (recommended: total committed amount for bet/raise, with server-calculated call amounts). The server ignores all client-calculated pots, stacks, winners, cards, legal-action lists, actors, and deadlines.
@@ -99,7 +99,7 @@ The canonical Phase 4 vocabulary is `ROOM_CREATED`, `ROOM_UPDATED`, `ROOM_CLOSED
 `PLAYER_UNREADY`. No `MEMBER_*`, `READY_CHANGED`, or `ROOM_REMOVED` aliases are used.
 Events use protocol version 1, a unique event ID, UTC occurrence time, room scope,
 and a sanitized summary/snapshot payload. Publication occurs only after the database transaction commits.
-- `CHAT_MESSAGE` (planned Phase 10B.3, broadcast on `/topic/room/{roomId}` only after persistence commits);
+- `CHAT_MESSAGE` (Phase 10B.3, broadcast on `/topic/room/{roomId}` only after persistence commits);
 - `GAME_STARTED`, `GAME_ENDED`.
 
 Game topic examples:
@@ -116,11 +116,11 @@ Public events never reveal unrevealed hole cards, deck order, private authentica
 
 Room chat is plain-text communication for current active room members only. Active membership means the existing `room_players` row has `left_at IS NULL`; both seated players and current spectators may send and read history. Non-members, departed or administratively removed members, inactive accounts, and all users after the room reaches `CLOSED` may not send. Chat remains allowed during an active hand and never enters Poker Engine or turn validation. Public/private room type makes no difference after legitimate admission.
 
-The planned Phase 10B.3 command destination remains the existing `/app/room/{roomId}/chat`; the server resolves sender identity solely from the authenticated principal. Its command contains required UUID `clientMessageId` and `content`, never `senderUserId`. The planned committed event type is `CHAT_MESSAGE`, broadcast on the existing `/topic/room/{roomId}` envelope with the authoritative safe message DTO. There are no typing, receipt, edit, delete, attachment, private-message, or presence events.
+Phase 10B.3 implements the existing `/app/room/{roomId}/chat` command; the server resolves sender identity solely from the authenticated principal. Its command contains required UUID `clientMessageId` and `content`, never `senderUserId`. The committed event type is `CHAT_MESSAGE`, broadcast on the existing `/topic/room/{roomId}` envelope with the authoritative safe message DTO. The payload contains `messageId`, `roomId`, `clientMessageId`, normalized `content`, `createdAt`, and safe `sender { userId, displayName, avatarUrl }`. There are no typing, receipt, edit, delete, attachment, private-message, or presence events.
 
 Content is stripped at both edges, must remain nonblank, must contain no ISO control characters (therefore Phase 10B does not support multiline messages), and is limited to 500 Unicode code points. Internal ordinary Unicode whitespace is preserved. The database stores the normalized content as `utf8mb4` `VARCHAR(500)`.
 
-The persistence sequence is authorization, normalization/idempotency validation, insert or exact retry reuse, transaction commit, `AFTER_COMMIT`, then best-effort broadcast. A rollback emits no event. STOMP is not durable; clients recover missed messages through REST history. Phase 10B.1 reserves this contract and schema only—no SEND handler or broadcast implementation exists yet.
+The persistence sequence is authorization, normalization/idempotency validation, insert, transaction commit, `AFTER_COMMIT`, then best-effort broadcast. A rollback emits no event. An exact idempotent retry reuses the row and emits no duplicate event; a conflicting retry is rejected. Each realtime envelope gets a fresh event UUID independent of database `messageId` and client `clientMessageId`. `registry.setPreservePublishOrder(true)` preserves broker order for the same destination. STOMP is not durable; clients will recover missed messages through the separately planned REST history adapter.
 
 ## Private events
 
