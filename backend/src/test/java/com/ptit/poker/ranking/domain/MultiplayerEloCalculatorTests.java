@@ -1,4 +1,4 @@
-package com.ptit.poker.analytics.domain.ranking;
+package com.ptit.poker.ranking.domain;
 import static org.assertj.core.api.Assertions.*;import java.util.*;import org.junit.jupiter.api.Test;
 class MultiplayerEloCalculatorTests {private final MultiplayerEloCalculator elo=new MultiplayerEloCalculator();
  @Test void equalRatedHeadsUpWinnerLoser(){assertThat(elo.calculate(List.of(r(1,1000,1),r(2,1000,-1)))).extracting(x->x.newRating()).containsExactly(1016,984);}

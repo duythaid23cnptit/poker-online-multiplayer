@@ -1,4 +1,4 @@
-package com.ptit.poker.analytics.application.ranking;
+package com.ptit.poker.ranking.application;
 import com.ptit.poker.game.application.GameSessionFinishedEvent;import org.slf4j.*;import org.springframework.context.annotation.Profile;import org.springframework.stereotype.Component;import org.springframework.transaction.event.*;
 @Component @Profile("!bootstrap") public class GameSessionRankingListener {private static final Logger LOG=LoggerFactory.getLogger(GameSessionRankingListener.class);private final RankingService ranking;public GameSessionRankingListener(RankingService ranking){this.ranking=ranking;}
  @TransactionalEventListener(phase=TransactionPhase.AFTER_COMMIT) public void finished(GameSessionFinishedEvent event){try{ranking.rateCompletedSession(event.gameSessionId());}catch(RuntimeException e){LOG.error("Ranking projection failed for completed session {}",event.gameSessionId(),e);}}}

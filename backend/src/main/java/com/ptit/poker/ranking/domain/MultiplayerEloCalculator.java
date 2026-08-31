@@ -1,4 +1,4 @@
-package com.ptit.poker.analytics.domain.ranking;
+package com.ptit.poker.ranking.domain;
 import java.util.*;
 public final class MultiplayerEloCalculator {
  public static final int INITIAL_RATING=1000,K_FACTOR=32;

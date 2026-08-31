@@ -1,5 +1,5 @@
-package com.ptit.poker.analytics.application.ranking;
-import com.ptit.poker.analytics.domain.ranking.MultiplayerEloCalculator;import java.sql.Timestamp;import java.time.*;import java.util.*;
+package com.ptit.poker.ranking.application;
+import com.ptit.poker.ranking.domain.MultiplayerEloCalculator;import java.sql.Timestamp;import java.time.*;import java.util.*;
 import org.springframework.context.annotation.Profile;import org.springframework.jdbc.core.JdbcTemplate;import org.springframework.stereotype.Service;import org.springframework.transaction.annotation.*;
 import org.springframework.http.HttpStatus;import org.springframework.web.server.ResponseStatusException;
 @Service @Profile("!bootstrap") public class RankingService {

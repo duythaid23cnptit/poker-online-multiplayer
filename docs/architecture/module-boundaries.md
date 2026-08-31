@@ -22,7 +22,7 @@ May depend on: `common`; a narrow player/account provisioning port or event for 
 
 ### `player`
 
-Owns user identity/profile data exposed to the application, display names/avatars, persistent Account Chip balance and its ledger boundary, account status administration rules, and online-presence projection. Authentication secrets remain in `auth`; durable poker statistics remain in `ranking`.
+Owns user identity/profile data exposed to the application, display names/avatars, persistent Account Chip balance and its ledger boundary, account status administration rules, and online-presence projection. Authentication secrets remain in `auth`; durable poker statistics remain in `analytics`.
 
 May depend on: `common`; consume auth lifecycle events. Other modules may request a safe player summary through an application interface.
 
@@ -56,13 +56,13 @@ May depend on: `common`, safe player identity summaries, and immutable room/star
 
 ### `ranking`
 
-Owns player aggregate statistics, rank calculation, leaderboard, current rankings, and ranking history. It consumes authoritative completed-hand/session events idempotently.
+Owns competitive player rating, multiplayer Elo calculation, leaderboard, current rankings, and ranking history in `player_rankings` and `ranking_history`. It consumes authoritative completed-session events idempotently.
 
 May depend on: `common` and safe player summaries. It consumes `game` event contracts but must not mutate or query active engine state.
 
 ### `analytics`
 
-Owns daily/weekly aggregate metrics and operational read models: online players, active rooms/games, spectators, average room occupancy, and average duration. It derives data from stable events or explicitly exposed projections.
+Owns player aggregate statistics, daily/weekly time-bucket metrics, and operational read models: online players, active rooms/games, spectators, average room occupancy, and average duration. It derives data from stable events or explicitly exposed projections.
 
 May depend on: `common` plus public event/projection contracts from player, room, game, and ranking. It cannot change their state.
 

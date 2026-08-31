@@ -1,3 +1,2 @@
-/** Ranking and player statistics module. Business implementation starts in a later phase. */
+/** Competitive rating, multiplayer Elo, leaderboard, and ranking-history module. */
 package com.ptit.poker.ranking;
-
