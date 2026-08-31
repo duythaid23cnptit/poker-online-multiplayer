@@ -1,5 +1,6 @@
 package com.ptit.poker.social.application;
 
+import com.ptit.poker.player.domain.PresenceStatus;
 import com.ptit.poker.social.domain.FriendshipStatus;
 import org.springframework.context.annotation.Profile;
 import org.springframework.context.ApplicationEventPublisher;
@@ -138,7 +139,10 @@ public class FriendshipService {
         LinkedHashSet<Long> otherIds = new LinkedHashSet<>();
         records.forEach(record -> otherIds.add(record.otherUserId(userId)));
         Map<Long, SocialPlayerQueryPort.SafePlayerSummary> summaries = players.findSafePlayerSummaries(otherIds);
-        List<FriendshipView> views = records.stream().map(record -> toView(record, userId, summaries)).toList();
+        Map<Long, PresenceStatus> presence = sortFriends
+                ? players.findPresenceStatuses(otherIds) : Map.of();
+        List<FriendshipView> views = records.stream()
+                .map(record -> toView(record, userId, summaries, presence)).toList();
         if (!sortFriends) return views;
         return views.stream().sorted(Comparator
                 .comparing((FriendshipView view) -> view.otherPlayer().displayName(), String.CASE_INSENSITIVE_ORDER)
@@ -147,9 +151,16 @@ public class FriendshipService {
 
     private FriendshipView toView(FriendshipRecord record, long userId,
                                   Map<Long, SocialPlayerQueryPort.SafePlayerSummary> summaries) {
+        return toView(record, userId, summaries, Map.of());
+    }
+
+    private FriendshipView toView(FriendshipRecord record, long userId,
+                                  Map<Long, SocialPlayerQueryPort.SafePlayerSummary> summaries,
+                                  Map<Long, PresenceStatus> presence) {
         long otherId = record.otherUserId(userId);
         SocialPlayerQueryPort.SafePlayerSummary summary = summaries.get(otherId);
         if (summary == null) throw FriendshipException.internalPersistence();
-        return new FriendshipView(record.id(), record.status(), record.createdAt(), record.respondedAt(), summary);
+        return new FriendshipView(record.id(), record.status(), record.createdAt(), record.respondedAt(),
+                summary, presence.get(otherId));
     }
 }

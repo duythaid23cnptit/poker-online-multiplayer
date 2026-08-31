@@ -1,5 +1,6 @@
 package com.ptit.poker.social.application;
 
+import com.ptit.poker.player.domain.PresenceStatus;
 import com.ptit.poker.social.domain.FriendshipStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,6 +20,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.times;
@@ -38,6 +40,9 @@ class FriendshipServiceTests {
         when(players.findSafePlayerSummaries(any())).thenAnswer(invocation ->
                 ((java.util.Collection<Long>) invocation.getArgument(0)).stream().collect(Collectors.toMap(
                         id -> id, id -> new SocialPlayerQueryPort.SafePlayerSummary(id, "Player " + id, null))));
+        when(players.findPresenceStatuses(any())).thenAnswer(invocation ->
+                ((java.util.Collection<Long>) invocation.getArgument(0)).stream().collect(Collectors.toMap(
+                        id -> id, id -> com.ptit.poker.player.domain.PresenceStatus.OFFLINE)));
         service = new FriendshipService(
                 persistence, players, Clock.fixed(NOW, ZoneOffset.UTC), events);
     }
@@ -170,6 +175,26 @@ class FriendshipServiceTests {
     void requestDirectionIsStrictAndCaseSensitive() {
         assertThat(FriendRequestDirection.parse("incoming")).isEqualTo(FriendRequestDirection.INCOMING);
         assertCode(() -> FriendRequestDirection.parse("INCOMING"), "INVALID_REQUEST");
+    }
+
+    @Test
+    void acceptedFriendListIncludesCurrentPresence() {
+        FriendshipRecord accepted = record(7, 1, 2, FriendshipStatus.ACCEPTED, NOW, 1);
+        when(persistence.listAccepted(1)).thenReturn(List.of(accepted));
+        doReturn(Map.of(2L, PresenceStatus.ONLINE)).when(players).findPresenceStatuses(any());
+
+        assertThat(service.listFriends(1)).singleElement()
+                .satisfies(view -> assertThat(view.presenceStatus()).isEqualTo(PresenceStatus.ONLINE));
+    }
+
+    @Test
+    void pendingRequestListDoesNotQueryOrExposePresence() {
+        FriendshipRecord pending = record(7, 1, 2, FriendshipStatus.PENDING, null, 0);
+        when(persistence.listIncomingPending(2)).thenReturn(List.of(pending));
+
+        assertThat(service.listFriendRequests(2, FriendRequestDirection.INCOMING)).singleElement()
+                .satisfies(view -> assertThat(view.presenceStatus()).isNull());
+        verify(players, never()).findPresenceStatuses(any());
     }
 
     private void player(long id, String name) {

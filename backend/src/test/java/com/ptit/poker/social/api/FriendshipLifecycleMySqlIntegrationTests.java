@@ -102,6 +102,7 @@ class FriendshipLifecycleMySqlIntegrationTests {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("PENDING"))
                 .andExpect(jsonPath("$.otherPlayer.userId").value(recipient.getId()))
+                .andExpect(jsonPath("$.presenceStatus").doesNotExist())
                 .andExpect(jsonPath("$.email").doesNotExist())
                 .andExpect(jsonPath("$.password").doesNotExist())
                 .andExpect(jsonPath("$.passwordHash").doesNotExist())
@@ -155,6 +156,7 @@ class FriendshipLifecycleMySqlIntegrationTests {
         send(b, a.getId()).andExpect(status().isOk())
                 .andExpect(jsonPath("$.requestId").value(id))
                 .andExpect(jsonPath("$.status").value("ACCEPTED"))
+                .andExpect(jsonPath("$.presenceStatus").doesNotExist())
                 .andExpect(jsonPath("$.respondedAt").isNotEmpty());
         assertThat(pairCount(a.getId(), b.getId())).isOne();
     }
@@ -187,7 +189,8 @@ class FriendshipLifecycleMySqlIntegrationTests {
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FRIEND_REQUEST_NOT_AUTHORIZED"));
         mvc.perform(post("/api/v1/friend-requests/{id}/accept", requestId)
                         .header(HttpHeaders.AUTHORIZATION, bearer(b)))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("ACCEPTED"));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("ACCEPTED"))
+                .andExpect(jsonPath("$.presenceStatus").doesNotExist());
         mvc.perform(post("/api/v1/friend-requests/{id}/accept", requestId)
                         .header(HttpHeaders.AUTHORIZATION, bearer(b)))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("FRIEND_REQUEST_NOT_PENDING"));
@@ -204,7 +207,8 @@ class FriendshipLifecycleMySqlIntegrationTests {
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FRIEND_REQUEST_NOT_AUTHORIZED"));
         mvc.perform(post("/api/v1/friend-requests/{id}/reject", requestId)
                         .header(HttpHeaders.AUTHORIZATION, bearer(b)))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REJECTED"));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REJECTED"))
+                .andExpect(jsonPath("$.presenceStatus").doesNotExist());
     }
 
     @Test
@@ -220,10 +224,12 @@ class FriendshipLifecycleMySqlIntegrationTests {
         mvc.perform(get("/api/v1/friend-requests").queryParam("direction", "incoming")
                         .header(HttpHeaders.AUTHORIZATION, bearer(current)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$[0].otherPlayer.userId").value(a.getId()))
+                .andExpect(jsonPath("$[0].presenceStatus").doesNotExist())
                 .andExpect(jsonPath("$.length()").value(1));
         mvc.perform(get("/api/v1/friend-requests").queryParam("direction", "outgoing")
                         .header(HttpHeaders.AUTHORIZATION, bearer(current)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$[0].otherPlayer.userId").value(b.getId()))
+                .andExpect(jsonPath("$[0].presenceStatus").doesNotExist())
                 .andExpect(jsonPath("$.length()").value(1));
         mvc.perform(get("/api/v1/friend-requests").queryParam("direction", "sideways")
                         .header(HttpHeaders.AUTHORIZATION, bearer(current)))
@@ -243,7 +249,9 @@ class FriendshipLifecycleMySqlIntegrationTests {
         mvc.perform(get("/api/v1/friends").header(HttpHeaders.AUTHORIZATION, bearer(current)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].otherPlayer.userId").value(alpha.getId()))
-                .andExpect(jsonPath("$[1].otherPlayer.userId").value(zed.getId()));
+                .andExpect(jsonPath("$[0].presenceStatus").value("OFFLINE"))
+                .andExpect(jsonPath("$[1].otherPlayer.userId").value(zed.getId()))
+                .andExpect(jsonPath("$[1].presenceStatus").value("OFFLINE"));
         assertThat(service.listFriends(zed.getId())).extracting(view -> view.otherPlayer().userId())
                 .containsExactly(current.getId());
     }

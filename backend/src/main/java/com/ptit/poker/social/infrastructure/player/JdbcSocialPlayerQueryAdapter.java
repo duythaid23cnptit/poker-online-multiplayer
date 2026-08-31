@@ -1,8 +1,10 @@
 package com.ptit.poker.social.infrastructure.player;
 
 import com.ptit.poker.social.application.SocialPlayerQueryPort;
+import com.ptit.poker.player.domain.PresenceStatus;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.stereotype.Repository;
 
 import java.util.Collection;
@@ -46,6 +48,18 @@ class JdbcSocialPlayerQueryAdapter implements SocialPlayerQueryPort {
                 distinctIds.toArray());
         Map<Long, SafePlayerSummary> byId = new LinkedHashMap<>();
         summaries.forEach(summary -> byId.put(summary.userId(), summary));
+        return Map.copyOf(byId);
+    }
+
+    @Override
+    public Map<Long, PresenceStatus> findPresenceStatuses(Collection<Long> userIds) {
+        if (userIds.isEmpty()) return Map.of();
+        List<Long> distinctIds = userIds.stream().distinct().toList();
+        String placeholders = String.join(",", java.util.Collections.nCopies(distinctIds.size(), "?"));
+        Map<Long, PresenceStatus> byId = new LinkedHashMap<>();
+        jdbc.query("SELECT user_id, online_status FROM player_profiles WHERE user_id IN (" + placeholders + ")",
+                (RowCallbackHandler) result -> byId.put(result.getLong("user_id"),
+                        PresenceStatus.valueOf(result.getString("online_status"))), distinctIds.toArray());
         return Map.copyOf(byId);
     }
 }
