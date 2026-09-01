@@ -4,7 +4,7 @@ A university Network Programming project for real-time multiplayer Texas Hold'em
 
 ## Current status
 
-Phases 0 through 9B, 10A, 10B.1, and 10B.2 are frozen. Phase 10B.3 implements authenticated, persisted, post-commit room-chat delivery over STOMP. Phase 10C adds connection-derived account presence and accepted-friend status notifications; real-MySQL/STOMP validation remains required before either phase can be frozen. Chat REST history and the full frontend remain later work.
+The backend through Phase 10C is frozen, including authenticated room-chat delivery, connection-derived presence, friend-status notifications, and the Phase 8B-R ranking-boundary refactor. Phase 11A establishes the frontend foundation: authentication, session restoration, protected routing, an application shell, profile foundation, reusable UI primitives, and a low-level STOMP client foundation. Lobby, room, poker-table, social, ranking, history, statistics, analytics, and admin UI remain later work.
 
 Presence is `ONLINE` while an account has at least one authenticated STOMP session and `OFFLINE` when it has none. Multiple tabs/devices are reference-counted by a thread-safe, single-server in-memory registry. The persisted player-profile projection is reset to `OFFLINE` on server startup so a process crash cannot leave stale online state. Online/offline friend status is a specification requirement; multi-session correctness and startup reconciliation are supporting implementation enhancements.
 
@@ -17,6 +17,7 @@ The approved baseline distinguishes persistent Account Chips from Table Chips tr
 - [Concurrency model](docs/architecture/concurrency.md)
 - [REST API proposal](docs/api/rest-api.md)
 - [WebSocket/STOMP protocol](docs/api/websocket-protocol.md)
+- [Frontend development guide](frontend/README.md)
 - [Logical ER model](docs/database/erd.md)
 - [Data dictionary](docs/database/data-dictionary.md)
 - [Test plan](docs/testing/test-plan.md)
@@ -57,6 +58,9 @@ From `frontend`:
 ```powershell
 npm install
 npm run dev
-npm run build
 npm test
+npm run build
+npm run lint
 ```
+
+The frontend requires Node 22 and npm 10. It reads only public Vite configuration from `VITE_API_BASE_URL` and `VITE_WS_URL`; start from `frontend/.env.example` and never put passwords, JWT signing keys, database credentials, or tokens in frontend environment files. The development server proxies REST and WebSocket traffic to the local backend so the browser stays on the supported local origin. See the [frontend development guide](frontend/README.md) for the session, state-management, and local-integration model.
