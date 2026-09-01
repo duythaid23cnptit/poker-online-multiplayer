@@ -1,0 +1,40 @@
+import { useEffect } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useSessionStore } from '../../auth/session/sessionStore'
+import { friendKeys } from '../../friends/api/friendQueries'
+import type { FriendshipView } from '../../friends/types/friend'
+import { stompSession } from '../../../shared/realtime/stompSession'
+import { useNotificationStore } from '../hooks/notificationStore'
+import { parseNotificationEvent } from './notificationEvent'
+
+export function RealtimeBootstrap() {
+  const queryClient = useQueryClient()
+  const status = useSessionStore((state) => state.status)
+  const accessToken = useSessionStore((state) => state.accessToken)
+
+  useEffect(() => {
+    if (status !== 'AUTHENTICATED' || !accessToken) {
+      useNotificationStore.getState().clear()
+      void stompSession.disconnect()
+      return
+    }
+    const stopListening = stompSession.listen('/user/queue/notifications', (body) => {
+      const event = parseNotificationEvent(body)
+      if (!event) return
+      useNotificationStore.getState().add(event)
+      if (event.type === 'FRIEND_STATUS_CHANGED') {
+        queryClient.setQueryData<FriendshipView[]>(friendKeys.list(), (friends) => friends?.map((friend) =>
+          friend.otherPlayer.userId === event.payload.userId
+            ? { ...friend, presenceStatus: event.payload.presenceStatus }
+            : friend,
+        ))
+      } else {
+        void queryClient.invalidateQueries({ queryKey: friendKeys.all })
+      }
+    })
+    stompSession.connect(accessToken)
+    return stopListening
+  }, [accessToken, queryClient, status])
+
+  return null
+}

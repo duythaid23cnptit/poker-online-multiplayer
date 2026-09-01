@@ -10,7 +10,12 @@ import { ErrorState } from '../../shared/ui/ErrorState'
 import { LoadingState } from '../../shared/ui/LoadingState'
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
-  `rounded-control px-3 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus ${isActive ? 'bg-accent/12 text-accent' : 'text-secondary hover:bg-surface-hover hover:text-text'}`
+  `app-nav-link ${isActive ? 'app-nav-link-active' : ''}`
+
+const navItems = [
+  ['Lobby', routes.app, true], ['Rooms', routes.rooms, false], ['Friends', routes.friends, false],
+  ['Rankings', routes.rankings, false], ['Profile', routes.profile, false],
+] as const
 
 export function AppShell() {
   const profile = useCurrentProfile()
@@ -22,14 +27,13 @@ export function AppShell() {
   const user = profile.data
   return (
     <div className="min-h-screen bg-canvas text-text">
-      <header className="sticky top-0 z-20 border-b border-border/80 bg-canvas/92 backdrop-blur-xl">
-        <div className="mx-auto flex min-h-16 max-w-7xl flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap sm:gap-4 sm:px-6 sm:py-0 lg:px-8">
+      <header className="app-header">
+        <div className="mx-auto flex min-h-16 max-w-[90rem] flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap sm:gap-4 sm:px-6 sm:py-0 lg:px-8">
           <AppLogo />
-          <nav className="order-3 flex w-full items-center gap-1 border-t border-border/70 pt-2 sm:order-none sm:ml-auto sm:w-auto sm:border-0 sm:pt-0" aria-label="Primary navigation">
-            <NavLink end to={routes.app} className={navClass}>Home</NavLink>
-            <NavLink to={routes.profile} className={navClass}>Profile</NavLink>
+          <nav className="app-nav" aria-label="Primary navigation">
+            {navItems.map(([label, to, end]) => <NavLink key={to} end={end} to={to} className={navClass}>{label}</NavLink>)}
           </nav>
-          <div className="hidden items-center gap-3 border-l border-border pl-4 sm:flex">
+          <div className="hidden items-center gap-3 border-l border-border pl-4 xl:flex">
             <Avatar displayName={user.displayName} src={user.avatarUrl} size="sm" />
             <div className="max-w-36 leading-tight">
               <p className="truncate text-sm font-bold text-text">{user.displayName}</p>
@@ -42,6 +46,7 @@ export function AppShell() {
         </div>
       </header>
       <Outlet />
+      <footer className="app-footer"><div><AppLogo /><p>Real-time tables. Server-authoritative play.</p></div><p>Play responsibly and enjoy the game.</p></footer>
     </div>
   )
 }

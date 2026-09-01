@@ -7,6 +7,7 @@ import { Button } from '../../../shared/ui/Button'
 import { Card } from '../../../shared/ui/Card'
 import { FormField } from '../../../shared/ui/FormField'
 import { Input } from '../../../shared/ui/Input'
+import { PageHeader } from '../../../shared/ui/PageHeader'
 import { useCurrentProfile } from '../hooks/useCurrentProfile'
 import { useUpdateProfile } from '../hooks/useUpdateProfile'
 import { profileSchema, type ProfileFormValues } from '../schemas/profileSchema'
@@ -47,20 +48,16 @@ export function ProfilePage() {
   const previewName = watchedDisplayName || profile.displayName
   const previewAvatar = watchedAvatarUrl || null
   return (
-    <main className="mx-auto w-full max-w-5xl px-4 py-10 sm:px-6 sm:py-14 lg:px-8">
-      <div className="max-w-2xl">
-        <p className="text-xs font-bold uppercase tracking-[0.22em] text-accent">Player identity</p>
-        <h1 className="mt-3 text-4xl font-black tracking-tight text-text">Your profile</h1>
-        <p className="mt-4 text-sm leading-6 text-secondary">Manage the safe identity other players will see at future tables.</p>
-      </div>
+    <main className="app-page">
+      <PageHeader title="Your profile" description="Manage the safe identity other players see at the tables." />
       <div className="mt-9 grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)]">
-        <Card className="h-fit p-6 text-center">
+        <Card className="dashboard-card h-fit p-6 text-center">
           <div className="flex justify-center"><Avatar displayName={previewName} src={previewAvatar} size="lg" /></div>
           <h2 className="mt-4 truncate text-lg font-bold text-text">{previewName}</h2>
           <p className="mt-1 truncate text-sm text-muted">@{profile.username}</p>
           {profile.email && <p className="mt-4 break-all border-t border-border pt-4 text-xs text-secondary">{profile.email}</p>}
         </Card>
-        <Card className="p-6 sm:p-8">
+        <Card className="dashboard-card p-6 sm:p-8">
           <h2 className="text-lg font-bold text-text">Profile details</h2>
           <p className="mt-2 text-sm leading-6 text-secondary">Only your display name and avatar can be changed here.</p>
           {saved && <div className="mt-5 rounded-control border border-success/30 bg-success/10 px-4 py-3 text-sm text-success" role="status">Profile updated.</div>}

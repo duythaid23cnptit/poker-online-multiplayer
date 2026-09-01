@@ -4,15 +4,16 @@ interface EmptyStateProps {
   title: string
   description: string
   action?: ReactNode
+  variant?: 'compact' | 'panel' | 'inline'
+  motif?: 'chip' | 'cards' | 'suit'
 }
 
-export function EmptyState({ title, description, action }: EmptyStateProps) {
+export function EmptyState({ title, description, action, variant = 'panel', motif = 'chip' }: EmptyStateProps) {
   return (
-    <div className="rounded-panel border border-dashed border-border bg-surface/55 p-8 text-center">
-      <div className="mx-auto mb-4 size-10 rounded-full border-4 border-accent/20 border-t-accent" aria-hidden="true" />
-      <h2 className="font-bold text-text">{title}</h2>
-      <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-secondary">{description}</p>
-      {action && <div className="mt-5">{action}</div>}
+    <div className={`empty-state empty-state-${variant}`}>
+      <div className={`empty-motif empty-motif-${motif}`} aria-hidden="true">{motif === 'cards' ? '' : '♠'}</div>
+      <div className="empty-copy"><h2>{title}</h2><p>{description}</p></div>
+      {action && <div className="empty-action">{action}</div>}
     </div>
   )
 }

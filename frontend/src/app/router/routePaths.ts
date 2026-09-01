@@ -3,6 +3,9 @@ export const routes = {
   login: '/login',
   register: '/register',
   app: '/app',
+  rooms: '/app/rooms',
+  friends: '/app/friends',
+  rankings: '/app/rankings',
   profile: '/app/profile',
 } as const
 

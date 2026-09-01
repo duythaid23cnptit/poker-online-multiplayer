@@ -1,7 +1,10 @@
 import { createBrowserRouter, RouterProvider, type RouteObject } from 'react-router-dom'
 import { AppShell } from '../layouts/AppShell'
-import { AccountHomePage } from '../../features/profile/pages/AccountHomePage'
 import { ProfilePage } from '../../features/profile/pages/ProfilePage'
+import { FriendsPage } from '../../features/friends/pages/FriendsPage'
+import { LobbyPage } from '../../features/lobby/pages/LobbyPage'
+import { RankingsPage } from '../../features/rankings/pages/RankingsPage'
+import { RoomsPage } from '../../features/rooms/pages/RoomsPage'
 import { AuthLayout } from '../../features/auth/components/AuthLayout'
 import { PublicOnlyRoute } from '../../features/auth/components/PublicOnlyRoute'
 import { RequireAuth } from '../../features/auth/components/RequireAuth'
@@ -24,7 +27,10 @@ const appRoutes: RouteObject[] = [
   {
     element: <RequireAuth />, children: [{
       path: routes.app, element: <AppShell />, children: [
-        { index: true, element: <AccountHomePage /> },
+        { index: true, element: <LobbyPage /> },
+        { path: 'rooms', element: <RoomsPage /> },
+        { path: 'friends', element: <FriendsPage /> },
+        { path: 'rankings', element: <RankingsPage /> },
         { path: 'profile', element: <ProfilePage /> },
         { path: '*', element: <NotFoundPage /> },
       ],
