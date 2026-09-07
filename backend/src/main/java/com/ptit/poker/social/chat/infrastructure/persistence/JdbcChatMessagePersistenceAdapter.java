@@ -12,6 +12,7 @@ import org.springframework.stereotype.Repository;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.sql.Types;
@@ -49,6 +50,19 @@ class JdbcChatMessagePersistenceAdapter implements ChatMessagePersistencePort {
                 FOR UPDATE
                 """, ROW_MAPPER, roomId, senderUserId, clientMessageId);
         return rows.stream().findFirst();
+    }
+
+    @Override
+    public List<ChatMessageRecord> findRecentByRoomId(long roomId, int limit) {
+        List<ChatMessageRecord> rows = jdbc.query("""
+                SELECT id, room_id, sender_user_id, client_message_id, content, created_at
+                FROM chat_messages
+                WHERE room_id=?
+                ORDER BY id DESC
+                LIMIT ?
+                """, ROW_MAPPER, roomId, limit);
+        Collections.reverse(rows);
+        return List.copyOf(rows);
     }
 
     private Optional<ChatMessageRecord> findById(long id) {

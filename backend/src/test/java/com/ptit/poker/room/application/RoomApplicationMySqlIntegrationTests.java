@@ -10,6 +10,7 @@ import com.ptit.poker.room.application.exception.RoomBusinessException;
 import com.ptit.poker.room.domain.RoomPlayerState;
 import com.ptit.poker.room.domain.RoomStatus;
 import com.ptit.poker.room.domain.RoomType;
+import com.ptit.poker.room.infrastructure.persistence.RoomEntity;
 import com.ptit.poker.room.infrastructure.persistence.RoomPlayerRepository;
 import com.ptit.poker.room.infrastructure.persistence.RoomRepository;
 import com.ptit.poker.support.TestDatabaseSafetyInitializer;
@@ -61,8 +62,62 @@ class RoomApplicationMySqlIntegrationTests {
         assertThat(hash).isNotEqualTo("room-password");
         assertThat(passwords.matches("room-password", hash)).isTrue();
         assertThatThrownBy(() -> service.join(joining.getId(), roomId,
+                new JoinRoomRequest(false, 1, 100L, null)))
+                .isInstanceOf(RoomBusinessException.class).hasMessage("Invalid room password");
+        assertThatThrownBy(() -> service.join(joining.getId(), roomId,
                 new JoinRoomRequest(false, 1, 100L, "wrong-password")))
                 .isInstanceOf(RoomBusinessException.class).hasMessage("Invalid room password");
+        assertThat(service.join(joining.getId(), roomId,
+                new JoinRoomRequest(false, 1, 100L, "room-password")).members())
+                .anySatisfy(member -> assertThat(member.userId()).isEqualTo(joining.getId()));
+    }
+
+    @Test
+    void privateRoomCreatorConvertsSpectatorMembershipWithoutPasswordOrDuplicate() {
+        UserEntity owner = user(1_000);
+        Long roomId = service.create(owner.getId(), create(RoomType.PRIVATE, "room-password")).room().id();
+        Long membershipId = members.findByRoomIdAndUserId(roomId, owner.getId()).orElseThrow().getId();
+
+        service.join(owner.getId(), roomId, new JoinRoomRequest(false, 2, 100L, null));
+
+        var converted = members.findByRoomIdAndUserId(roomId, owner.getId()).orElseThrow();
+        assertThat(converted.getId()).isEqualTo(membershipId);
+        assertThat(converted.getSeatNumber()).isEqualTo(2);
+        assertThat(converted.getPlayerState()).isEqualTo(RoomPlayerState.NOT_READY);
+        assertThat(members.findAllByRoomIdAndLeftAtIsNullOrderById(roomId))
+                .filteredOn(member -> member.getUserId().equals(owner.getId())).hasSize(1);
+    }
+
+    @Test
+    void authorizedPrivateRoomSpectatorConvertsWithoutPasswordAndStillUsesSeatAndChipRules() {
+        UserEntity owner = user(1_000); UserEntity spectator = user(1_000); UserEntity occupant = user(1_000);
+        Long roomId = service.create(owner.getId(), create(RoomType.PRIVATE, "room-password")).room().id();
+        service.join(spectator.getId(), roomId, new JoinRoomRequest(true, null, null, "room-password"));
+        service.join(occupant.getId(), roomId, new JoinRoomRequest(false, 1, 100L, "room-password"));
+        Long membershipId = members.findByRoomIdAndUserId(roomId, spectator.getId()).orElseThrow().getId();
+
+        assertThatThrownBy(() -> service.join(spectator.getId(), roomId,
+                new JoinRoomRequest(false, 1, 100L, null)))
+                .isInstanceOf(RoomBusinessException.class).hasMessage("Seat is occupied");
+        service.join(spectator.getId(), roomId, new JoinRoomRequest(false, 3, 100L, null));
+
+        var converted = members.findByRoomIdAndUserId(roomId, spectator.getId()).orElseThrow();
+        assertThat(converted.getId()).isEqualTo(membershipId);
+        assertThat(converted.getSeatNumber()).isEqualTo(3);
+        assertThat(users.findById(spectator.getId()).orElseThrow().getAccountChips()).isEqualTo(900);
+    }
+
+    @Test
+    void privateRoomSpectatorConversionStillRejectsInsufficientAccountChips() {
+        UserEntity owner = user(50);
+        Long roomId = service.create(owner.getId(), create(RoomType.PRIVATE, "room-password")).room().id();
+
+        assertThatThrownBy(() -> service.join(owner.getId(), roomId,
+                new JoinRoomRequest(false, 2, 100L, null)))
+                .isInstanceOf(RoomBusinessException.class).hasMessage("Insufficient account chips");
+        var membership = members.findByRoomIdAndUserId(roomId, owner.getId()).orElseThrow();
+        assertThat(membership.getSeatNumber()).isNull();
+        assertThat(membership.getPlayerState()).isEqualTo(RoomPlayerState.SPECTATING);
     }
 
     @Test
@@ -75,6 +130,26 @@ class RoomApplicationMySqlIntegrationTests {
         var member = members.findByRoomIdAndUserId(roomId, joining.getId()).orElseThrow();
         assertThat(member.getTableChips()).isEqualTo(100);
         assertThat(member.getPlayerState()).isEqualTo(RoomPlayerState.NOT_READY);
+    }
+
+    @Test
+    void authenticatedNonMemberCanReadAuthoritativeWaitingRoomSeatsButNotActiveRoomDetail() {
+        UserEntity owner = user(1_000); UserEntity seated = user(1_000); UserEntity observer = user(1_000);
+        Long roomId = service.create(owner.getId(), create(RoomType.PUBLIC, null)).room().id();
+        service.join(seated.getId(), roomId, new JoinRoomRequest(false, 3, 100L, null));
+
+        var waiting = service.detail(observer.getId(), roomId);
+        assertThat(waiting.members()).anySatisfy(member -> {
+            assertThat(member.userId()).isEqualTo(seated.getId());
+            assertThat(member.username()).isEqualTo(seated.getUsername());
+            assertThat(member.seatNumber()).isEqualTo(3);
+        });
+
+        RoomEntity active = rooms.findById(roomId).orElseThrow();
+        active.start(java.time.Instant.now());
+        rooms.saveAndFlush(active);
+        assertThatThrownBy(() -> service.detail(observer.getId(), roomId))
+                .isInstanceOf(RoomBusinessException.class).hasMessage("Active membership required");
     }
 
     @Test

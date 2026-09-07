@@ -30,6 +30,7 @@ public class HandPlayerEntity {
     public Long getPokerHandId() { return pokerHandId; }
     public Long getUserId() { return userId; }
     public int getSeatNumber() { return seatNumber; }
+    public long getEndingTableChips() { return endingTableChips; }
     public PokerPlayerState getParticipationState() { return participationState; }
     public boolean isConnectedAtEnd() { return connectedAtEnd; }
     public boolean isLeavingAtEnd() { return leavingAtEnd; }

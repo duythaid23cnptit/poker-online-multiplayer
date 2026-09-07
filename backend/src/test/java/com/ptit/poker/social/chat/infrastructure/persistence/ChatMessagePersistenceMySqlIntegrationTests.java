@@ -1,6 +1,7 @@
 package com.ptit.poker.social.chat.infrastructure.persistence;
 
 import com.ptit.poker.support.TestDatabaseSafetyInitializer;
+import com.ptit.poker.social.chat.application.ChatMessagePersistencePort;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ChatMessagePersistenceMySqlIntegrationTests {
     @Autowired Flyway flyway;
     @Autowired JdbcTemplate jdbc;
+    @Autowired ChatMessagePersistencePort messages;
 
     private final List<Long> roomIds = new ArrayList<>();
     private final List<Long> userIds = new ArrayList<>();
@@ -50,7 +52,7 @@ class ChatMessagePersistenceMySqlIntegrationTests {
     @Test
     void flywayV11CreatesChatMessagesAndHibernateValidatesIt() {
         assertThat(flyway.info().current()).isNotNull();
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("11");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("12");
         assertThat(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM information_schema.tables
                 WHERE table_schema=DATABASE() AND table_name='chat_messages'
@@ -121,6 +123,17 @@ class ChatMessagePersistenceMySqlIntegrationTests {
         long firstId = insert(first, sender, UUID.randomUUID(), "first");
         insert(second, sender, UUID.randomUUID(), "second");
         assertThat(history(first, Long.MAX_VALUE, 10)).containsExactly(firstId);
+    }
+
+    @Test
+    void persistencePortReturnsNewestBoundedWindowInChronologicalOrder() {
+        Fixture fixture = fixture();
+        List<Long> ids = new ArrayList<>();
+        for (int i = 1; i <= 5; i++) ids.add(insert(fixture.room(), fixture.sender(), UUID.randomUUID(), "m" + i));
+
+        assertThat(messages.findRecentByRoomId(fixture.room(), 3))
+                .extracting(record -> record.messageId())
+                .containsExactly(ids.get(2), ids.get(3), ids.get(4));
     }
 
     @Test

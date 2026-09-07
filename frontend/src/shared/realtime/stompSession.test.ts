@@ -11,6 +11,7 @@ function clientPort(active = true) {
   const deactivate = vi.fn(async () => undefined)
   const unsubscribe = vi.fn()
   const subscribe = vi.fn((_destination: string, _callback: (message: IMessage) => void) => ({ unsubscribe }))
+  const publish = vi.fn()
   const client: StompClientPort & { subscribe: typeof subscribe } = {
     active,
     connected: false,
@@ -18,8 +19,9 @@ function clientPort(active = true) {
     activate,
     deactivate,
     subscribe,
+    publish,
   }
-  return { client, activate, deactivate, subscribe, unsubscribe }
+  return { client, activate, deactivate, subscribe, unsubscribe, publish }
 }
 
 describe('StompSessionManager', () => {
@@ -62,6 +64,19 @@ describe('StompSessionManager', () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1)
   })
 
+  it('resubscribes listeners in registration order after a connection closes', () => {
+    const { client, subscribe } = clientPort()
+    const factory = vi.fn<StompClientFactory>(() => client)
+    const manager = new StompSessionManager('wss://poker.test/ws', factory)
+    manager.listen('/topic/game/id', vi.fn())
+    manager.connect('access-token')
+    const config: StompConfig = factory.mock.calls[0][0]
+    config.onConnect?.({} as never)
+    config.onWebSocketClose?.({} as CloseEvent)
+    config.onConnect?.({} as never)
+    expect(subscribe).toHaveBeenCalledTimes(2)
+  })
+
   it('reuses an active client instead of creating a duplicate connection', () => {
     const { client, activate } = clientPort(true)
     const factory = vi.fn<StompClientFactory>(() => client)
@@ -74,6 +89,16 @@ describe('StompSessionManager', () => {
     expect(activate).toHaveBeenCalledTimes(1)
     expect(client.connectHeaders).toEqual({ Authorization: 'Bearer replacement-token' })
     expect(manager.isActive()).toBe(true)
+  })
+
+  it('publishes JSON commands only while connected', () => {
+    const { client, publish } = clientPort()
+    const manager = new StompSessionManager('wss://poker.test/ws', () => client)
+    manager.connect('access-token')
+    expect(manager.send('/app/game/id/action', { actionType: 'CHECK' })).toBe(false)
+    client.connected = true
+    expect(manager.send('/app/game/id/action', { actionType: 'CHECK' })).toBe(true)
+    expect(publish).toHaveBeenCalledWith({ destination: '/app/game/id/action', body: '{"actionType":"CHECK"}' })
   })
 
   it('disconnects once and makes repeated cleanup idempotent', async () => {

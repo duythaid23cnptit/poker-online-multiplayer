@@ -8,6 +8,7 @@ import { Avatar } from '../../shared/ui/Avatar'
 import { Button } from '../../shared/ui/Button'
 import { ErrorState } from '../../shared/ui/ErrorState'
 import { LoadingState } from '../../shared/ui/LoadingState'
+import { ActiveGameRecovery } from '../../features/game/components/ActiveGameRecovery'
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
   `app-nav-link ${isActive ? 'app-nav-link-active' : ''}`
@@ -33,6 +34,7 @@ export function AppShell() {
           <nav className="app-nav" aria-label="Primary navigation">
             {navItems.map(([label, to, end]) => <NavLink key={to} end={end} to={to} className={navClass}>{label}</NavLink>)}
           </nav>
+          <ActiveGameRecovery />
           <div className="hidden items-center gap-3 border-l border-border pl-4 xl:flex">
             <Avatar displayName={user.displayName} src={user.avatarUrl} size="sm" />
             <div className="max-w-36 leading-tight">

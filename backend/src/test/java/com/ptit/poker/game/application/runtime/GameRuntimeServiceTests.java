@@ -19,6 +19,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -35,7 +39,7 @@ class GameRuntimeServiceTests {
     void setUp() {
         service = new GameRuntimeService(new ActiveGameRegistry(), rooms, sessions, history,
                 () -> new Deck(new Random(42)));
-        when(sessions.startSession(anyLong())).thenReturn(new GameSessionView(
+        when(sessions.startSession(anyLong(), any(UUID.class))).thenReturn(new GameSessionView(
                 10, 1, GameSessionStatus.ACTIVE, Instant.EPOCH, null));
         when(history.startHand(anyLong(), anyLong(), anyLong(), anyLong(), any(GameState.class)))
                 .thenAnswer(invocation -> {
@@ -43,13 +47,76 @@ class GameRuntimeServiceTests {
                     return new HandHistoryHandle(20, state.players().stream().collect(java.util.stream.Collectors.toMap(
                             p -> p.userId(), p -> Math.addExact(p.tableChips(), p.totalCommitted()))));
                 });
+        when(rooms.loadForStart(anyLong())).thenAnswer(invocation -> rooms.load(invocation.getArgument(0)));
+    }
+
+    @Test
+    void startGameRequiresANewWritableTransaction() throws Exception {
+        Transactional boundary = GameRuntimeService.class.getMethod("startGame", long.class, long.class)
+                .getAnnotation(Transactional.class);
+        assertThat(boundary).isNotNull();
+        assertThat(boundary.propagation()).isEqualTo(Propagation.REQUIRES_NEW);
+        assertThat(boundary.readOnly()).isFalse();
+    }
+
+    @Test
+    void startNextHandRequiresANewWritableTransaction() throws Exception {
+        Transactional boundary = GameRuntimeService.class.getMethod("startNextHand", UUID.class)
+                .getAnnotation(Transactional.class);
+        assertThat(boundary).isNotNull();
+        assertThat(boundary.propagation()).isEqualTo(Propagation.REQUIRES_NEW);
+        assertThat(boundary.readOnly()).isFalse();
+    }
+
+    @Test
+    void transactionRollbackCompletionRemovesRegisteredRuntime() {
+        when(rooms.load(1)).thenReturn(room(seat(1, 1, 1_000), seat(2, 2, 1_000)));
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.startGame(1, 0);
+            List<TransactionSynchronization> callbacks = TransactionSynchronizationManager.getSynchronizations();
+            assertThat(callbacks).isNotEmpty();
+            callbacks.forEach(callback -> callback.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        assertThat(service.startGame(1, 0)).isNotNull();
+    }
+
+    @Test
+    void nextHandTransactionRollbackMarksMutatedRuntimeFailed() {
+        GameRuntimeView first = startHeadsUp(2);
+        GameRuntimeView completed = service.applyAction(first.gameId(), first.currentTurnUserId(),
+                intent(first, PokerActionType.FOLD, 0));
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.startNextHand(completed.gameId());
+            TransactionSynchronizationManager.getSynchronizations().forEach(callback ->
+                    callback.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        assertThat(service.currentView(completed.gameId()).failed()).isTrue();
+        assertThatThrownBy(() -> service.startNextHand(completed.gameId()))
+                .isInstanceOf(GameRuntimeException.class);
+    }
+
+    @Test
+    void failureBeforeCommitRemovesRuntimeAndAllowsRetry() {
+        when(rooms.load(1)).thenReturn(room(seat(1, 1, 1_000), seat(2, 2, 1_000)));
+        doThrow(new IllegalStateException("room update failed")).doNothing().when(rooms).markPlaying(eq(1L), anyList());
+
+        assertThatThrownBy(() -> service.startGame(1, 0)).hasMessageContaining("room update failed");
+        assertThat(service.startGame(1, 0)).isNotNull();
     }
 
     @Test
     void threePlayerStartUsesLowestDealerClockwiseBlindsAndPostsExactlyOnce() {
         when(rooms.load(1)).thenReturn(room(seat(1, 1, 1_000), seat(2, 4, 1_000), seat(3, 8, 1_000)));
 
-        GameRuntimeView view = service.startGame(1);
+        GameRuntimeView view = service.startGame(1, 0);
 
         assertThat(view.dealerSeat()).isEqualTo(1);
         assertThat(view.smallBlindSeat()).isEqualTo(4);
@@ -64,7 +131,7 @@ class GameRuntimeServiceTests {
     void headsUpDealerIsSmallBlindAndActsFirstPreFlop() {
         when(rooms.load(1)).thenReturn(room(seat(1, 2, 1_000), seat(2, 7, 1_000)));
 
-        GameRuntimeView view = service.startGame(1);
+        GameRuntimeView view = service.startGame(1, 0);
 
         assertThat(view.dealerSeat()).isEqualTo(2);
         assertThat(view.smallBlindSeat()).isEqualTo(2);
@@ -76,7 +143,7 @@ class GameRuntimeServiceTests {
     void shortBigBlindPostsAvailableStackThenAutomaticRunoutSettlesIt() {
         when(rooms.load(1)).thenReturn(room(seat(1, 1, 1_000), seat(2, 2, 60)));
 
-        GameRuntimeView view = service.startGame(1);
+        GameRuntimeView view = service.startGame(1, 0);
 
         ArgumentCaptor<HandSettlementResult> settlement = ArgumentCaptor.forClass(HandSettlementResult.class);
         verify(history).completeHand(any(), any(), settlement.capture(), eq(HandCompletionReason.SHOWDOWN));
@@ -88,11 +155,11 @@ class GameRuntimeServiceTests {
     @Test
     void rejectsInsufficientPlayersAndDuplicateRoomStart() {
         when(rooms.load(1)).thenReturn(room(seat(1, 1, 1_000)));
-        assertThatThrownBy(() -> service.startGame(1)).isInstanceOf(GameRuntimeException.class);
+        assertThatThrownBy(() -> service.startGame(1, 0)).isInstanceOf(GameRuntimeException.class);
 
         when(rooms.load(1)).thenReturn(room(seat(1, 1, 1_000), seat(2, 2, 1_000)));
-        service.startGame(1);
-        assertThatThrownBy(() -> service.startGame(1))
+        service.startGame(1, 0);
+        assertThatThrownBy(() -> service.startGame(1, 0))
                 .isInstanceOfSatisfying(GameRuntimeException.class,
                         error -> assertThat(error.code()).isEqualTo("GAME_ALREADY_ACTIVE"));
     }
@@ -252,26 +319,34 @@ class GameRuntimeServiceTests {
     void allInBlindRunoutBustsLoserAndFinishesSessionWithoutOnePlayerHand() {
         when(rooms.load(72)).thenReturn(new RoomGamePort.RoomGameSnapshot(72, 50, 100,
                 List.of(seat(1, 1, 50), seat(2, 2, 100))));
-        GameRuntimeView completed = service.startGame(72);
+        GameRuntimeView completed = service.startGame(72, 0);
         assertThat(completed.handCompleted()).isTrue();
         assertThat(completed.communityCards()).hasSize(5).doesNotHaveDuplicates();
         assertThat(completed.players()).filteredOn(player -> player.tableChips() == 0).hasSize(1);
+        assertThat(service.completedSettlement(completed.gameId(), completed.handId())).isPresent()
+                .get().extracting(HandSettlementResult::foldOnly).isEqualTo(false);
 
         GameRuntimeView finished = service.startNextHand(completed.gameId());
 
         assertThat(finished.sessionFinished()).isTrue();
+        assertThat(finished.players()).extracting(GameRuntimeView.PlayerView::tableChips)
+                .containsExactlyElementsOf(completed.players().stream().map(GameRuntimeView.PlayerView::tableChips).toList());
         verify(sessions).finishSession(10L);
+        verify(rooms).finishRoom(72L);
+        verify(rooms).finalizeActiveGameDeparture(72L, 1L);
+        verify(rooms).finalizeActiveGameDeparture(72L, 2L);
         verify(history, times(1)).startHand(anyLong(), anyLong(), anyLong(), anyLong(), any());
-        assertThatThrownBy(() -> service.applyAction(completed.gameId(), 1,
-                new GameActionIntent(UUID.randomUUID(), UUID.randomUUID(), PokerActionType.CHECK, 0)))
+        assertThatThrownBy(() -> service.startNextHand(completed.gameId()))
                 .isInstanceOf(GameRuntimeException.class);
+        verify(sessions, times(1)).finishSession(10L);
+        verify(rooms, times(2)).finalizeActiveGameDeparture(eq(72L), anyLong());
     }
 
     @Test
     void fourGappedSeatsRotateToDealerThreeAndUseClockwisePositions() {
         when(rooms.load(81)).thenReturn(new RoomGamePort.RoomGameSnapshot(81, 50, 100, List.of(
                 seat(1, 1, 1_000), seat(3, 3, 1_000), seat(6, 6, 1_000), seat(8, 8, 1_000))));
-        GameRuntimeView view = service.startGame(81);
+        GameRuntimeView view = service.startGame(81, 0);
         for (long user : List.of(8L, 1L, 3L)) {
             view = service.applyAction(view.gameId(), user, intent(view, PokerActionType.FOLD, 0));
         }
@@ -309,7 +384,7 @@ class GameRuntimeServiceTests {
         when(rooms.load(82)).thenReturn(new RoomGamePort.RoomGameSnapshot(82, 50, 100,
                 List.of(seat(1, 1, 30), seat(2, 2, 1_000))));
 
-        service.startGame(82);
+        service.startGame(82, 0);
 
         assertThat(blindSnapshot.get()).containsExactly(0L, 30L, 30L,
                 com.ptit.poker.game.domain.state.PokerPlayerState.ALL_IN);
@@ -319,7 +394,7 @@ class GameRuntimeServiceTests {
     void foldedPlayerCannotActAgainOrMutateHistory() {
         when(rooms.load(83)).thenReturn(new RoomGamePort.RoomGameSnapshot(83, 50, 100,
                 List.of(seat(1, 1, 1_000), seat(2, 2, 1_000), seat(3, 3, 1_000))));
-        GameRuntimeView view = service.startGame(83);
+        GameRuntimeView view = service.startGame(83, 0);
         GameRuntimeView afterFold = service.applyAction(view.gameId(), 1, intent(view, PokerActionType.FOLD, 0));
         long chips = afterFold.players().getFirst().tableChips();
 
@@ -334,7 +409,7 @@ class GameRuntimeServiceTests {
     void allInPlayerCannotSubmitAnotherNormalAction() {
         when(rooms.load(84)).thenReturn(new RoomGamePort.RoomGameSnapshot(84, 50, 100,
                 List.of(seat(1, 1, 1_000), seat(2, 2, 1_000), seat(3, 3, 1_000))));
-        GameRuntimeView view = service.startGame(84);
+        GameRuntimeView view = service.startGame(84, 0);
         GameRuntimeView afterAllIn = service.applyAction(view.gameId(), 1, intent(view, PokerActionType.ALL_IN, 0));
 
         assertThatThrownBy(() -> service.applyAction(afterAllIn.gameId(), 1,
@@ -349,7 +424,7 @@ class GameRuntimeServiceTests {
                 () -> new Deck(new Random(3)));
         when(rooms.load(85)).thenReturn(new RoomGamePort.RoomGameSnapshot(85, 50, 100,
                 List.of(seat(1, 1, 50), seat(2, 2, 100), seat(3, 3, 1_000))));
-        GameRuntimeView view = service.startGame(85);
+        GameRuntimeView view = service.startGame(85, 0);
         view = service.applyAction(view.gameId(), 1, intent(view, PokerActionType.ALL_IN, 0));
         view = service.applyAction(view.gameId(), 2, intent(view, PokerActionType.ALL_IN, 0));
         view = service.applyAction(view.gameId(), 3, intent(view, PokerActionType.CHECK, 0));
@@ -373,6 +448,69 @@ class GameRuntimeServiceTests {
         assertThat(outcome.after().handCompleted()).isTrue();
         verify(history).recordAcceptedAction(eq(20L),argThat(action->action.actionType()==PokerActionType.FOLD
                 && action.clientActionId()==null));
+    }
+
+    @Test
+    void hostStartRequiresTheRoomOwnerAndEverySeatedPlayerReady() {
+        when(rooms.loadForStart(1)).thenReturn(new RoomGamePort.RoomGameSnapshot(1, 7,
+                com.ptit.poker.room.domain.RoomStatus.WAITING, 50, 100,
+                List.of(seat(7, 1, 1_000), seat(8, 2, 1_000))));
+
+        assertThat(service.startGame(1, 7)).isNotNull();
+        verify(rooms).markPlaying(1, List.of(7L, 8L));
+    }
+
+    @Test
+    void nonHostCannotStartAReadyRoom() {
+        when(rooms.loadForStart(1)).thenReturn(new RoomGamePort.RoomGameSnapshot(1, 7,
+                com.ptit.poker.room.domain.RoomStatus.WAITING, 50, 100,
+                List.of(seat(7, 1, 1_000), seat(8, 2, 1_000))));
+
+        assertThatThrownBy(() -> service.startGame(1, 8))
+                .isInstanceOfSatisfying(GameRuntimeException.class,
+                        failure -> assertThat(failure.code()).isEqualTo("ROOM_HOST_REQUIRED"));
+        verify(sessions, never()).startSession(anyLong(), any());
+    }
+
+    @Test
+    void oneUnreadySeatedPlayerBlocksTheWholeTable() {
+        RoomGamePort.RoomSeat unready = new RoomGamePort.RoomSeat(9, 3, 1_000, RoomPlayerState.NOT_READY);
+        when(rooms.loadForStart(1)).thenReturn(new RoomGamePort.RoomGameSnapshot(1, 7,
+                com.ptit.poker.room.domain.RoomStatus.WAITING, 50, 100,
+                List.of(seat(7, 1, 1_000), seat(8, 2, 1_000), unready)));
+
+        assertThatThrownBy(() -> service.startGame(1, 7))
+                .isInstanceOfSatisfying(GameRuntimeException.class,
+                        failure -> assertThat(failure.code()).isEqualTo("PLAYERS_NOT_READY"));
+        verify(sessions, never()).startSession(anyLong(), any());
+    }
+
+    @Test
+    void spectatorHostCanStartTwoReadySeatedPlayers() {
+        when(rooms.loadForStart(1)).thenReturn(new RoomGamePort.RoomGameSnapshot(1, 7,
+                com.ptit.poker.room.domain.RoomStatus.WAITING, 50, 100,
+                List.of(seat(8, 2, 1_000), seat(9, 4, 1_000))));
+
+        GameRuntimeView started = service.startGame(1, 7);
+
+        assertThat(started.players()).extracting(GameRuntimeView.PlayerView::userId).containsExactly(8L, 9L);
+    }
+
+    @Test
+    void timeoutCompletionWithOneContinuingPlayerFinishesTheSession() {
+        GameRuntimeView started=startHeadsUp(901);
+        service.requestDeparture(started.gameId(),2);
+
+        GameRuntimeView completed=service.handleTurnTimeout(started.gameId(),started.handId(),started.turnId())
+                .orElseThrow().after();
+        GameRuntimeView terminal=service.startNextHand(started.gameId());
+
+        assertThat(completed.handCompleted()).isTrue();
+        assertThat(terminal.sessionFinished()).isTrue();
+        verify(sessions,times(1)).finishSession(started.gameSessionId());
+        verify(rooms,times(1)).finishRoom(901);
+        verify(rooms,times(1)).finalizeActiveGameDeparture(901,1);
+        verify(rooms,times(1)).finalizeActiveGameDeparture(901,2);
     }
 
     @Test
@@ -421,10 +559,32 @@ class GameRuntimeServiceTests {
     }
 
     @Test
+    void currentParticipantDiscoverySurvivesDisconnectAndReconnectButExcludesObservers() {
+        GameRuntimeView started = startHeadsUp(940);
+        when(rooms.canObserve(940, 99)).thenReturn(true);
+
+        assertThat(service.currentViewByUser(1)).get().extracting(GameRuntimeView::gameId)
+                .isEqualTo(started.gameId());
+        assertThat(service.canObserve(started.gameId(), 99)).isTrue();
+        assertThat(service.currentViewByUser(99)).isEmpty();
+
+        service.disconnect(1).orElseThrow();
+        assertThat(service.currentViewByUser(1)).get()
+                .matches(view -> !view.players().stream().filter(player -> player.userId() == 1)
+                        .findFirst().orElseThrow().connected());
+
+        service.reconnect(1).orElseThrow();
+        assertThat(service.currentViewByUser(1)).get()
+                .matches(view -> view.gameId().equals(started.gameId())
+                        && view.players().stream().filter(player -> player.userId() == 1)
+                        .findFirst().orElseThrow().connected());
+    }
+
+    @Test
     void allInDisconnectPreservesAllInParticipation() {
         when(rooms.load(95)).thenReturn(new RoomGamePort.RoomGameSnapshot(95,50,100,
                 List.of(seat(1,1,200),seat(2,2,1_000),seat(3,3,1_000))));
-        GameRuntimeView started=service.startGame(95);
+        GameRuntimeView started=service.startGame(95, 0);
         service.applyAction(started.gameId(),1,intent(started,PokerActionType.ALL_IN,0));
         var player=service.disconnect(1).orElseThrow().view().players().stream()
                 .filter(value->value.userId()==1).findFirst().orElseThrow();
@@ -439,8 +599,12 @@ class GameRuntimeServiceTests {
                 intent(started,PokerActionType.FOLD,0));
         service.disconnect(1);assertThat(service.expireReconnect(started.gameId(),1)).isTrue();
         verify(rooms).finalizeActiveGameDeparture(96,1);
+        verify(rooms).finalizeActiveGameDeparture(96,2);
         verify(sessions).finishSession(completed.gameSessionId());
+        verify(rooms).finishRoom(96);
         assertThatThrownBy(()->service.currentView(completed.gameId())).isInstanceOf(GameRuntimeException.class);
+        assertThat(service.currentViewByUser(1)).isEmpty();
+        assertThat(service.currentViewByUser(2)).isEmpty();
     }
 
     @Test
@@ -462,14 +626,14 @@ class GameRuntimeServiceTests {
                 new RoomGamePort.RoomSeat(2,2,1_000,RoomPlayerState.PLAYING))));
         GameRuntimeView next=service.startNextHand(started.gameId());
         assertThat(next.gameSessionId()).isEqualTo(sessionId);assertThat(next.handNumber()).isEqualTo(2);
-        verify(sessions,times(1)).startSession(97);
+        verify(sessions,times(1)).startSession(eq(97L), any(UUID.class));
     }
 
     @Test
     void threePlayerNextHandExcludesDisconnectedMemberButRetainsReconnectability() {
         when(rooms.load(98)).thenReturn(new RoomGamePort.RoomGameSnapshot(98,50,100,List.of(
                 seat(1,1,1_000),seat(2,2,1_000),seat(3,3,1_000))));
-        GameRuntimeView view=service.startGame(98);service.disconnect(3);
+        GameRuntimeView view=service.startGame(98, 0);service.disconnect(3);
         while(!view.handCompleted())view=service.applyAction(view.gameId(),view.currentTurnUserId(),intent(view,PokerActionType.FOLD,0));
         when(rooms.load(98)).thenReturn(new RoomGamePort.RoomGameSnapshot(98,50,100,List.of(
                 new RoomGamePort.RoomSeat(1,1,1_000,RoomPlayerState.PLAYING),
@@ -491,8 +655,119 @@ class GameRuntimeServiceTests {
                 .isInstanceOf(GameRuntimeException.class);
         GameRuntimeView completed=service.applyAction(started.gameId(),started.currentTurnUserId(),intent(started,PokerActionType.FOLD,0));
         assertThat(completed.handCompleted()).isTrue();
-        verify(rooms).markAdministrativeLeaving(99,2);
+        verify(rooms).markLeaving(99,2);
         verify(rooms).finalizeActiveGameDeparture(99,2);
+    }
+
+    @Test
+    void participantDepartureIsDeferredVisibleAndIdempotentDuringCurrentHand() {
+        GameRuntimeView started=startHeadsUp(101);
+
+        var first=service.requestDeparture(started.gameId(),2);
+        var duplicate=service.requestDeparture(started.gameId(),2);
+
+        assertThat(first.changed()).isTrue();assertThat(first.deferred()).isTrue();
+        assertThat(first.view().players()).filteredOn(player->player.userId()==2).singleElement()
+                .satisfies(player->{assertThat(player.leaving()).isTrue();assertThat(player.totalCommitted()).isPositive();});
+        assertThat(duplicate.changed()).isFalse();assertThat(duplicate.deferred()).isTrue();
+        assertThat(service.currentView(started.gameId()).players()).extracting(GameRuntimeView.PlayerView::userId)
+                .contains(2L);
+        verify(rooms,times(1)).markLeaving(101,2);
+        verify(rooms,never()).finalizeActiveGameDeparture(101,2);
+    }
+
+    @Test
+    void departureFinalizesExactlyOnceAtSettlementAndActiveMineNoLongerFindsPlayer() {
+        GameRuntimeView started=startHeadsUp(102);
+        service.requestDeparture(started.gameId(),2);
+
+        GameRuntimeView completed=service.applyAction(started.gameId(),started.currentTurnUserId(),
+                intent(started,PokerActionType.FOLD,0));
+
+        assertThat(completed.handCompleted()).isTrue();
+        verify(rooms,times(1)).finalizeActiveGameDeparture(102,2);
+        assertThat(service.currentViewByUser(2)).isEmpty();
+        assertThatThrownBy(()->service.requestDeparture(started.gameId(),2))
+                .isInstanceOfSatisfying(GameRuntimeException.class,
+                        error->assertThat(error.code()).isEqualTo("NOT_GAME_PARTICIPANT"));
+        verify(rooms,times(1)).finalizeActiveGameDeparture(102,2);
+    }
+
+    @Test
+    void departedPlayerIsExcludedFromNextHand() {
+        when(rooms.load(103)).thenReturn(new RoomGamePort.RoomGameSnapshot(103,50,100,List.of(
+                seat(1,1,1_000),seat(2,2,1_000),seat(3,3,1_000))));
+        GameRuntimeView view=service.startGame(103, 0);
+        service.requestDeparture(view.gameId(),3);
+        while(!view.handCompleted())view=service.applyAction(view.gameId(),view.currentTurnUserId(),
+                intent(view,PokerActionType.FOLD,0));
+        when(rooms.load(103)).thenReturn(new RoomGamePort.RoomGameSnapshot(103,50,100,List.of(
+                new RoomGamePort.RoomSeat(1,1,1_000,RoomPlayerState.PLAYING),
+                new RoomGamePort.RoomSeat(2,2,1_000,RoomPlayerState.PLAYING))));
+
+        GameRuntimeView next=service.startNextHand(view.gameId());
+
+        assertThat(next.players()).extracting(GameRuntimeView.PlayerView::userId).containsExactly(1L,2L);
+        verify(rooms,times(1)).finalizeActiveGameDeparture(103,3);
+    }
+
+    @Test
+    void stalePlayingSeatCannotReseatDepartedUserAcrossMultipleHands() {
+        // Deliberately keep returning the pre-departure room snapshot. Runtime
+        // session membership must exclude this user independently of room state.
+        when(rooms.load(106)).thenReturn(new RoomGamePort.RoomGameSnapshot(106,50,100,List.of(
+                seat(1,1,1_000),seat(2,2,1_000),seat(3,3,1_000))));
+        GameRuntimeView view=service.startGame(106, 0);
+        long originalHand=view.handNumber();
+        service.requestDeparture(view.gameId(),3);
+        service.requestDeparture(view.gameId(),3);
+        for(int hand=0;hand<2;hand++) {
+            while(!view.handCompleted())view=service.applyAction(view.gameId(),view.currentTurnUserId(),
+                    intent(view,PokerActionType.FOLD,0));
+            assertThat(service.currentViewByUser(3)).isEmpty();
+            view=service.startNextHand(view.gameId());
+            assertThat(view.handNumber()).isEqualTo(originalHand+hand+1);
+            assertThat(view.players()).extracting(GameRuntimeView.PlayerView::userId).containsExactly(1L,2L);
+            assertThat(view.players()).allSatisfy(player->assertThat(player.holeCardCount()).isEqualTo(2));
+        }
+        verify(rooms,times(1)).markLeaving(106,3);
+        verify(rooms,times(1)).finalizeActiveGameDeparture(106,3);
+    }
+
+    @Test
+    void departureLeavingOneEligiblePlayerUsesSharedSessionTermination() {
+        GameRuntimeView started=startHeadsUp(104);
+        service.requestDeparture(started.gameId(),2);
+        GameRuntimeView completed=service.applyAction(started.gameId(),started.currentTurnUserId(),
+                intent(started,PokerActionType.FOLD,0));
+        when(rooms.load(104)).thenReturn(new RoomGamePort.RoomGameSnapshot(104,50,100,List.of(
+                new RoomGamePort.RoomSeat(1,1,1_000,RoomPlayerState.PLAYING))));
+
+        GameRuntimeView terminal=service.startNextHand(completed.gameId());
+
+        assertThat(terminal.sessionFinished()).isTrue();
+        verify(sessions).finishSession(started.gameSessionId());verify(rooms).finishRoom(104);
+        verify(rooms,times(1)).finalizeActiveGameDeparture(104,1);
+        verify(rooms,times(1)).finalizeActiveGameDeparture(104,2);
+    }
+
+    @Test
+    void outsiderSpectatorWrongGameAndFinishedSessionCannotUseParticipantDeparture() {
+        GameRuntimeView started=startHeadsUp(105);
+        assertThatThrownBy(()->service.requestDeparture(started.gameId(),99))
+                .isInstanceOfSatisfying(GameRuntimeException.class,
+                        error->assertThat(error.code()).isEqualTo("NOT_GAME_PARTICIPANT"));
+        assertThatThrownBy(()->service.requestDeparture(UUID.randomUUID(),1))
+                .isInstanceOfSatisfying(GameRuntimeException.class,
+                        error->assertThat(error.code()).isEqualTo("GAME_NOT_ACTIVE"));
+        var termination=service.requestAdministrativeTermination(started.gameSessionId());
+        assertThat(termination.deferred()).isTrue();
+        GameRuntimeView terminal=service.applyAction(started.gameId(),started.currentTurnUserId(),
+                intent(started,PokerActionType.FOLD,0));
+        assertThat(terminal.sessionFinished()).isTrue();
+        assertThatThrownBy(()->service.requestDeparture(started.gameId(),1))
+                .isInstanceOfSatisfying(GameRuntimeException.class,
+                        error->assertThat(error.code()).isEqualTo("GAME_NOT_ACTIVE"));
     }
 
     @Test
@@ -523,7 +798,7 @@ class GameRuntimeServiceTests {
     private GameRuntimeView startHeadsUp(long roomId) {
         when(rooms.load(roomId)).thenReturn(new RoomGamePort.RoomGameSnapshot(roomId, 50, 100,
                 List.of(seat(1, 1, 1_000), seat(2, 2, 1_000))));
-        return service.startGame(roomId);
+        return service.startGame(roomId, 0);
     }
 
     private static GameActionIntent intent(GameRuntimeView view, PokerActionType type, long target) {

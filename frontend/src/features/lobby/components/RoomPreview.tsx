@@ -8,7 +8,7 @@ import { StatusBadge } from '../../../shared/ui/StatusBadge'
 export function RoomPreview({ rooms }: { rooms: RoomSummary[] }) {
   if (!rooms.length) return <EmptyState variant="compact" motif="cards" title="No rooms are waiting" description="Create the first room when you are ready to host a table." action={<Link className="empty-action-link" to={`${routes.rooms}?create=1`}>Create a room</Link>} />
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto" role="region" aria-label="Waiting rooms" tabIndex={0}>
       <table className="data-table min-w-[34rem]">
         <thead><tr><th>Room</th><th>Blinds</th><th>Players</th><th>Access</th></tr></thead>
         <tbody>{rooms.slice(0, 5).map((room) => (

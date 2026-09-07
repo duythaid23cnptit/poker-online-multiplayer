@@ -64,7 +64,9 @@ public class RoomApplicationService {
 
     @Transactional(readOnly = true)
     public RoomDetailResponse detail(Long userId, Long roomId) {
-        if (!isActiveMember(roomId, userId)) throw forbidden("ROOM_DETAIL_FORBIDDEN", "Active membership required");
+        RoomEntity requestedRoom = room(roomId);
+        if (requestedRoom.getStatus() != RoomStatus.WAITING && !isActiveMember(roomId, userId))
+            throw forbidden("ROOM_DETAIL_FORBIDDEN", "Active membership required");
         return snapshot(roomId);
     }
 
@@ -82,9 +84,12 @@ public class RoomApplicationService {
         catch (IllegalStateException ex) { throw forbidden("ACCOUNT_NOT_ACTIVE", "Account is unavailable"); }
         RoomEntity room = rooms.findByIdForUpdate(roomId).orElseThrow(() -> notFound("ROOM_NOT_FOUND", "Room not found"));
         if (room.getStatus() != RoomStatus.WAITING) throw conflict("ROOM_NOT_JOINABLE", "Room is not joinable");
-        if (room.getRoomType() == RoomType.PRIVATE && (request.password() == null || !passwords.matches(request.password(), room.getPasswordHash())))
-            throw forbidden("INVALID_ROOM_PASSWORD", "Invalid room password");
         RoomPlayerEntity member = members.findByRoomIdAndUserIdForUpdate(roomId, userId).orElse(null);
+        boolean convertsActiveSpectator = member != null && member.isActive()
+                && member.getSeatNumber() == null && !request.joinsAsSpectator();
+        if (room.getRoomType() == RoomType.PRIVATE && !convertsActiveSpectator
+                && (request.password() == null || !passwords.matches(request.password(), room.getPasswordHash())))
+            throw forbidden("INVALID_ROOM_PASSWORD", "Invalid room password");
         if (member != null && member.isActive() && !(member.getSeatNumber() == null && !request.joinsAsSpectator()))
             throw conflict("ALREADY_JOINED", "User already joined this room");
         Integer seat = request.joinsAsSpectator() ? null : request.seatNumber();

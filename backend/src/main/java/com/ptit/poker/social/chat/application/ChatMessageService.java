@@ -11,10 +11,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @Profile("!bootstrap")
 public class ChatMessageService {
+    public static final int MAX_HISTORY_LIMIT = 100;
     private final ChatMessagePersistencePort messages;
     private final ChatRoomAccessPort rooms;
     private final SocialPlayerQueryPort players;
@@ -35,17 +40,7 @@ public class ChatMessageService {
                                        String clientMessageId, String content) {
         ClientMessageId command = parseClientMessageId(clientMessageId);
         ChatMessageContent normalized = parseContent(content);
-        ChatRoomAccessPort.RoomAccess access = rooms.find(roomId, authenticatedUserId)
-                .orElseThrow(() -> ChatMessageException.notFound("Room was not found"));
-        if (!access.activeAccount()) {
-            throw ChatMessageException.forbidden("CHAT_NOT_ROOM_MEMBER", "Active membership required");
-        }
-        if (access.closed()) {
-            throw ChatMessageException.forbidden("CHAT_ROOM_CLOSED", "Room chat is closed");
-        }
-        if (!access.activeMember()) {
-            throw ChatMessageException.forbidden("CHAT_NOT_ROOM_MEMBER", "Active membership required");
-        }
+        requireChatAccess(authenticatedUserId, roomId);
 
         String commandValue = command.toString();
         ChatMessageRecord record;
@@ -67,6 +62,35 @@ public class ChatMessageService {
         return result;
     }
 
+    @Transactional(readOnly = true)
+    public List<ChatMessageView> findRecentMessages(long authenticatedUserId, long roomId, int limit) {
+        if (limit < 1 || limit > MAX_HISTORY_LIMIT) {
+            throw ChatMessageException.bad("CHAT_INVALID_LIMIT", "Chat history limit must be between 1 and 100");
+        }
+        requireChatAccess(authenticatedUserId, roomId);
+        List<ChatMessageRecord> records = messages.findRecentByRoomId(roomId, limit);
+        Set<Long> senderIds = records.stream()
+                .map(ChatMessageRecord::senderUserId)
+                .collect(Collectors.toSet());
+        Map<Long, SocialPlayerQueryPort.SafePlayerSummary> senders =
+                players.findSafePlayerSummaries(senderIds);
+        return records.stream().map(record -> toView(record, senders)).toList();
+    }
+
+    private void requireChatAccess(long authenticatedUserId, long roomId) {
+        ChatRoomAccessPort.RoomAccess access = rooms.find(roomId, authenticatedUserId)
+                .orElseThrow(() -> ChatMessageException.notFound("Room was not found"));
+        if (!access.activeAccount()) {
+            throw ChatMessageException.forbidden("CHAT_NOT_ROOM_MEMBER", "Active membership required");
+        }
+        if (access.closed()) {
+            throw ChatMessageException.forbidden("CHAT_ROOM_CLOSED", "Room chat is closed");
+        }
+        if (!access.activeMember()) {
+            throw ChatMessageException.forbidden("CHAT_NOT_ROOM_MEMBER", "Active membership required");
+        }
+    }
+
     private static boolean isClientCommandCollision(Throwable failure) {
         Throwable current = failure;
         while (current != null && current.getCause() != current) {
@@ -79,8 +103,13 @@ public class ChatMessageService {
     }
 
     private ChatMessageView toView(ChatMessageRecord record) {
-        SocialPlayerQueryPort.SafePlayerSummary sender = players.findSafePlayerSummaries(
-                        java.util.List.of(record.senderUserId())).get(record.senderUserId());
+        return toView(record, players.findSafePlayerSummaries(List.of(record.senderUserId())));
+    }
+
+    private ChatMessageView toView(
+            ChatMessageRecord record,
+            Map<Long, SocialPlayerQueryPort.SafePlayerSummary> senders) {
+        SocialPlayerQueryPort.SafePlayerSummary sender = senders.get(record.senderUserId());
         if (sender == null) throw ChatMessageException.bad("CHAT_SENDER_NOT_FOUND", "Sender projection was not found");
         return new ChatMessageView(record.messageId(), record.roomId(), record.clientMessageId(),
                 record.content(), record.createdAt(), sender);

@@ -6,24 +6,27 @@ import com.ptit.poker.auth.infrastructure.persistence.UserEntity;
 import com.ptit.poker.auth.infrastructure.persistence.UserRepository;
 import com.ptit.poker.game.domain.betting.PokerActionType;
 import com.ptit.poker.game.application.CanonicalCardCodec;
+import com.ptit.poker.game.application.GameSnapshotQueryService;
 import com.ptit.poker.game.infrastructure.persistence.*;
 import com.ptit.poker.room.domain.*;
 import com.ptit.poker.room.infrastructure.persistence.*;
 import com.ptit.poker.support.TestDatabaseSafetyInitializer;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.Random;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.ContextConfiguration;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import com.ptit.poker.game.domain.card.Deck;
 
@@ -37,7 +40,7 @@ import static org.mockito.Mockito.when;
 @ActiveProfiles("test")
 @ContextConfiguration(initializers = TestDatabaseSafetyInitializer.class)
 @SpringBootTest
-@Transactional
+// Runtime commands use REQUIRES_NEW; fixtures must be committed before those commands acquire room locks.
 class GameRuntimeMySqlIntegrationTests {
     @Autowired GameRuntimeService runtime;
     @Autowired ActiveGameRegistry registry;
@@ -49,23 +52,56 @@ class GameRuntimeMySqlIntegrationTests {
     @Autowired PlayerActionRepository actions;
     @Autowired HandPlayerRepository handPlayers;
     @Autowired JdbcTemplate jdbc;
+    @Autowired GameSnapshotQueryService snapshotQueries;
     @MockitoBean DeckFactory deckFactory;
+    private final List<Long> createdRoomIds = new ArrayList<>();
+    private final List<Long> createdUserIds = new ArrayList<>();
 
     @BeforeEach
     void deterministicDeck() {
         when(deckFactory.create()).thenAnswer(invocation -> new Deck(new Random(42)));
     }
 
+    @AfterEach
+    void removeCommittedFixtures() {
+        for (long roomId : createdRoomIds) {
+            registry.findByRoom(roomId).ifPresent(registry::remove);
+            jdbc.update("DELETE FROM game_sessions WHERE room_id = ?", roomId);
+            jdbc.update("DELETE FROM room_players WHERE room_id = ?", roomId);
+            jdbc.update("DELETE FROM rooms WHERE id = ?", roomId);
+        }
+        for (long userId : createdUserIds) {
+            jdbc.update("DELETE FROM users WHERE id = ?", userId);
+        }
+    }
+
+    @Test
+    void gameSessionRuntimeIdentityIsPersistedAndUnique() {
+        UserEntity owner = persistUser();
+        RoomEntity room = persistRoom(new RoomEntity(unique("identity-room"), owner.getId(),
+                RoomType.PUBLIC, null, 6, 50, 100, 1_000, RoomStatus.WAITING, Instant.now()));
+        UUID gameId = UUID.randomUUID();
+        GameSessionEntity first = sessions.saveAndFlush(new GameSessionEntity(room.getId(), gameId,
+                GameSessionStatus.FINISHED, Instant.now(), Instant.now()));
+
+        assertThat(first.getGameId()).isEqualTo(gameId.toString());
+        assertThatThrownBy(() -> sessions.saveAndFlush(new GameSessionEntity(room.getId(), gameId,
+                GameSessionStatus.FINISHED, Instant.now(), Instant.now())))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
     @Test
     void startEarlyFoldSynchronizationAndNextHandPersistThroughRealBoundaries() {
-        UserEntity first = users.saveAndFlush(user()); UserEntity second = users.saveAndFlush(user());
-        RoomEntity room = rooms.saveAndFlush(new RoomEntity(unique("runtime-room"), first.getId(),
+        UserEntity first = persistUser(); UserEntity second = persistUser();
+        RoomEntity room = persistRoom(new RoomEntity(unique("runtime-room"), first.getId(),
                 RoomType.PUBLIC, null, 6, 50, 100, 1_000, RoomStatus.WAITING, Instant.now()));
         roomPlayers.saveAndFlush(new RoomPlayerEntity(room.getId(), first.getId(), 1, RoomPlayerState.READY, 1_000));
         roomPlayers.saveAndFlush(new RoomPlayerEntity(room.getId(), second.getId(), 4, RoomPlayerState.READY, 1_000));
         long firstAccount = accountChips(first.getId()); long secondAccount = accountChips(second.getId());
 
-        GameRuntimeView started = runtime.startGame(room.getId());
+        GameRuntimeView started = runtime.startGame(room.getId(), room.getOwnerUserId());
+        assertThat(sessions.findById(started.gameSessionId()).orElseThrow().getGameId())
+                .isEqualTo(started.gameId().toString());
 
         assertThat(sessions.findById(started.gameSessionId()).orElseThrow().getStatus()).isEqualTo(GameSessionStatus.ACTIVE);
         PokerHandEntity firstHand = hands.findAllByGameSessionIdOrderByHandNumber(started.gameSessionId()).getFirst();
@@ -75,6 +111,7 @@ class GameRuntimeMySqlIntegrationTests {
         assertThat(started.bigBlindSeat()).isEqualTo(4);
         assertThat(roomPlayers.findAllByRoomIdAndLeftAtIsNullOrderById(room.getId()))
                 .extracting(RoomPlayerEntity::getPlayerState).containsOnly(RoomPlayerState.PLAYING);
+        assertThat(rooms.findById(room.getId()).orElseThrow().getStatus()).isEqualTo(RoomStatus.PLAYING);
 
         GameRuntimeView completed = runtime.applyAction(started.gameId(), started.currentTurnUserId(),
                 new GameActionIntent(started.turnId(), UUID.randomUUID(), PokerActionType.FOLD, 0));
@@ -100,9 +137,9 @@ class GameRuntimeMySqlIntegrationTests {
 
     @Test
     void runtimeDrivenShowdownPersistsBoardPotsAwardsCardsAndCommitments() {
-        UserEntity first = users.saveAndFlush(user()); UserEntity second = users.saveAndFlush(user());
+        UserEntity first = persistUser(); UserEntity second = persistUser();
         long firstAccount = accountChips(first.getId()); long secondAccount = accountChips(second.getId());
-        RoomEntity room = rooms.saveAndFlush(new RoomEntity(unique("showdown-room"), first.getId(),
+        RoomEntity room = persistRoom(new RoomEntity(unique("showdown-room"), first.getId(),
                 RoomType.PUBLIC, null, 6, 50, 100, 1_000, RoomStatus.WAITING, Instant.now()));
         roomPlayers.saveAndFlush(new RoomPlayerEntity(room.getId(), first.getId(), 1, RoomPlayerState.READY, 1_000));
         roomPlayers.saveAndFlush(new RoomPlayerEntity(room.getId(), second.getId(), 2, RoomPlayerState.READY, 1_000));
@@ -115,7 +152,7 @@ class GameRuntimeMySqlIntegrationTests {
                 first.getId(), CanonicalCardCodec.serialize(List.of(firstFirst, firstSecond)));
         String expectedBoard = CanonicalCardCodec.serialize(expectedDeck.draw(5));
 
-        GameRuntimeView view = runtime.startGame(room.getId());
+        GameRuntimeView view = runtime.startGame(room.getId(), room.getOwnerUserId());
         for (int actionsTaken = 0; !view.handCompleted() && actionsTaken < 20; actionsTaken++) {
             long actorId = view.currentTurnUserId();
             GameRuntimeView.PlayerView actor = view.players().stream()
@@ -157,46 +194,90 @@ class GameRuntimeMySqlIntegrationTests {
 
     @Test
     void automaticRunoutBustsPlayerAndFinishesSessionWithoutSecondHand() {
-        UserEntity first = users.saveAndFlush(user()); UserEntity second = users.saveAndFlush(user());
+        when(deckFactory.create()).thenAnswer(invocation -> new Deck(new Random(1)));
+        UserEntity first = persistUser(); UserEntity second = persistUser();
         long firstAccount = accountChips(first.getId()); long secondAccount = accountChips(second.getId());
-        RoomEntity room = rooms.saveAndFlush(new RoomEntity(unique("finish-room"), first.getId(),
-                RoomType.PUBLIC, null, 6, 50, 100, 100, RoomStatus.WAITING, Instant.now()));
-        roomPlayers.saveAndFlush(new RoomPlayerEntity(room.getId(), first.getId(), 1, RoomPlayerState.READY, 50));
-        roomPlayers.saveAndFlush(new RoomPlayerEntity(room.getId(), second.getId(), 2, RoomPlayerState.READY, 100));
+        RoomEntity room = persistRoom(new RoomEntity(unique("finish-room"), first.getId(),
+                RoomType.PUBLIC, null, 6, 50, 100, 545, RoomStatus.WAITING, Instant.now()));
+        roomPlayers.saveAndFlush(new RoomPlayerEntity(room.getId(), first.getId(), 1, RoomPlayerState.READY, 545));
+        roomPlayers.saveAndFlush(new RoomPlayerEntity(room.getId(), second.getId(), 2, RoomPlayerState.READY, 455));
 
-        GameRuntimeView completed = runtime.startGame(room.getId());
+        GameRuntimeView started = runtime.startGame(room.getId(), room.getOwnerUserId());
+        GameRuntimeView afterFirstAllIn = runtime.applyAction(started.gameId(), started.currentTurnUserId(),
+                new GameActionIntent(started.turnId(), UUID.randomUUID(), PokerActionType.ALL_IN, 0));
+        GameRuntimeView completed = runtime.applyAction(started.gameId(), afterFirstAllIn.currentTurnUserId(),
+                new GameActionIntent(afterFirstAllIn.turnId(), UUID.randomUUID(), PokerActionType.ALL_IN, 0));
         assertThat(completed.handCompleted()).isTrue();
-        assertThat(completed.players()).filteredOn(player -> player.tableChips() == 0).hasSize(1);
+        assertThat(completed.players()).extracting(GameRuntimeView.PlayerView::tableChips)
+                .containsExactlyInAnyOrder(1_000L, 0L);
         assertThat(roomPlayers.findAllByRoomIdAndLeftAtIsNullOrderById(room.getId()))
                 .extracting(RoomPlayerEntity::getTableChips)
                 .containsExactlyElementsOf(completed.players().stream().map(GameRuntimeView.PlayerView::tableChips).toList());
+        PokerHandEntity finalHand = hands.findAllByGameSessionIdOrderByHandNumber(completed.gameSessionId()).getFirst();
+        assertThat(jdbc.queryForList("SELECT amount FROM pots WHERE poker_hand_id = ? ORDER BY pot_index",
+                Long.class, finalHand.getId())).containsExactly(910L);
+        assertThat(jdbc.queryForList("SELECT amount FROM uncalled_bet_returns WHERE poker_hand_id = ?",
+                Long.class, finalHand.getId())).containsExactly(90L);
 
         GameRuntimeView finished = runtime.startNextHand(completed.gameId());
 
         assertThat(finished.sessionFinished()).isTrue();
-        assertThat(sessions.findById(finished.gameSessionId()).orElseThrow().getStatus())
-                .isEqualTo(GameSessionStatus.FINISHED);
+        assertThat(finished.players()).extracting(GameRuntimeView.PlayerView::tableChips)
+                .containsExactlyElementsOf(completed.players().stream().map(GameRuntimeView.PlayerView::tableChips).toList());
+        GameSessionEntity persistedSession = sessions.findById(finished.gameSessionId()).orElseThrow();
+        assertThat(persistedSession.getStatus()).isEqualTo(GameSessionStatus.FINISHED);
+        assertThat(persistedSession.getEndedAt()).isNotNull();
+        assertThat(rooms.findById(room.getId()).orElseThrow().getStatus()).isEqualTo(RoomStatus.FINISHED);
         assertThat(hands.findAllByGameSessionIdOrderByHandNumber(finished.gameSessionId())).hasSize(1);
+        assertThat(roomPlayers.findAllByRoomIdAndLeftAtIsNullOrderById(room.getId())).isEmpty();
+        RoomPlayerEntity firstMembership = roomPlayers.findByRoomIdAndUserId(room.getId(), first.getId()).orElseThrow();
+        RoomPlayerEntity secondMembership = roomPlayers.findByRoomIdAndUserId(room.getId(), second.getId()).orElseThrow();
+        assertThat(List.of(firstMembership, secondMembership)).allSatisfy(member -> {
+            assertThat(member.getLeftAt()).isNotNull();
+            assertThat(member.getSeatNumber()).isNull();
+            assertThat(member.getTableChips()).isZero();
+            assertThat(member.getPlayerState()).isEqualTo(RoomPlayerState.SPECTATING);
+        });
+        Map<Long, Long> finalStacks = completed.players().stream().collect(java.util.stream.Collectors.toMap(
+                GameRuntimeView.PlayerView::userId, GameRuntimeView.PlayerView::tableChips));
+        assertThat(accountChips(first.getId())).isEqualTo(firstAccount + finalStacks.get(first.getId()));
+        assertThat(accountChips(second.getId())).isEqualTo(secondAccount + finalStacks.get(second.getId()));
+        long firstAfterFinish = accountChips(first.getId());
+        long secondAfterFinish = accountChips(second.getId());
         assertThatThrownBy(() -> registry.require(completed.gameId()))
                 .isInstanceOf(GameRuntimeException.class).hasMessageContaining("GAME_NOT_ACTIVE");
-        assertRoomStacks(room.getId(), completed);
-        assertThat(accountChips(first.getId())).isEqualTo(firstAccount);
-        assertThat(accountChips(second.getId())).isEqualTo(secondAccount);
+        var refreshed = snapshotQueries.snapshot(completed.gameId(), first.getId());
+        HandPlayerEntity firstFinalHand = handPlayers.findAllByPokerHandIdOrderBySeatNumber(finalHand.getId()).stream()
+                .filter(player -> player.getUserId().equals(first.getId())).findFirst().orElseThrow();
+        assertThat(refreshed).isNotNull();
+        assertThat(refreshed.publicState().sessionFinished()).isTrue();
+        assertThat(refreshed.publicState().handCompleted()).isTrue();
+        assertThat(refreshed.publicState().communityCards()).hasSize(5);
+        assertThat(refreshed.publicState().players()).extracting(player -> player.tableChips())
+                .containsExactlyElementsOf(completed.players().stream().map(GameRuntimeView.PlayerView::tableChips).toList());
+        assertThat(refreshed.holeCards()).containsExactlyElementsOf(CanonicalCardCodec.deserialize(firstFinalHand.getHoleCards()));
+        assertThat(refreshed.turn()).isNull();
+        assertThat(refreshed.timer()).isNull();
+        UserEntity outsider = persistUser();
+        assertThat(snapshotQueries.snapshot(completed.gameId(), outsider.getId())).isNull();
+        assertThatThrownBy(() -> runtime.startNextHand(completed.gameId())).isInstanceOf(GameRuntimeException.class);
+        assertThat(accountChips(first.getId())).isEqualTo(firstAfterFinish);
+        assertThat(accountChips(second.getId())).isEqualTo(secondAfterFinish);
     }
 
     @Test
     void threePlayerAllInExcludesBustedPlayerFromPersistedSecondHand() {
         when(deckFactory.create()).thenAnswer(invocation -> new Deck(new Random(3)));
-        UserEntity first = users.saveAndFlush(user()); UserEntity second = users.saveAndFlush(user());
-        UserEntity third = users.saveAndFlush(user());
+        UserEntity first = persistUser(); UserEntity second = persistUser();
+        UserEntity third = persistUser();
         long[] accounts = {accountChips(first.getId()), accountChips(second.getId()), accountChips(third.getId())};
-        RoomEntity room = rooms.saveAndFlush(new RoomEntity(unique("bust-room"), first.getId(),
+        RoomEntity room = persistRoom(new RoomEntity(unique("bust-room"), first.getId(),
                 RoomType.PUBLIC, null, 6, 50, 100, 1_000, RoomStatus.WAITING, Instant.now()));
         roomPlayers.saveAndFlush(new RoomPlayerEntity(room.getId(), first.getId(), 1, RoomPlayerState.READY, 50));
         roomPlayers.saveAndFlush(new RoomPlayerEntity(room.getId(), second.getId(), 2, RoomPlayerState.READY, 100));
         roomPlayers.saveAndFlush(new RoomPlayerEntity(room.getId(), third.getId(), 3, RoomPlayerState.READY, 1_000));
 
-        GameRuntimeView view = runtime.startGame(room.getId());
+        GameRuntimeView view = runtime.startGame(room.getId(), room.getOwnerUserId());
         assertThat(view.phase()).isEqualTo(com.ptit.poker.game.domain.state.GamePhase.PRE_FLOP);
         assertThat(view.currentTurnUserId()).isEqualTo(first.getId());
         view = runtime.applyAction(view.gameId(), first.getId(),
@@ -242,6 +323,16 @@ class GameRuntimeMySqlIntegrationTests {
 
     private long accountChips(long userId) {
         return jdbc.queryForObject("SELECT account_chips FROM users WHERE id = ?", Long.class, userId);
+    }
+    private UserEntity persistUser() {
+        UserEntity persisted = users.saveAndFlush(user());
+        createdUserIds.add(persisted.getId());
+        return persisted;
+    }
+    private RoomEntity persistRoom(RoomEntity room) {
+        RoomEntity persisted = rooms.saveAndFlush(room);
+        createdRoomIds.add(persisted.getId());
+        return persisted;
     }
     private void assertRoomStacks(long roomId, GameRuntimeView view) {
         Map<Long, Long> authoritative = view.players().stream().collect(java.util.stream.Collectors.toMap(

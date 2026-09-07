@@ -6,6 +6,7 @@ import com.ptit.poker.auth.domain.*;
 import com.ptit.poker.auth.infrastructure.persistence.*;
 import com.ptit.poker.auth.infrastructure.security.JwtService;
 import com.ptit.poker.game.api.realtime.GameEventType;
+import com.ptit.poker.game.application.realtime.GameRealtimePublisher;
 import com.ptit.poker.game.application.realtime.GameRealtimeApplicationService;
 import com.ptit.poker.game.application.runtime.*;
 import com.ptit.poker.game.infrastructure.persistence.PlayerActionRepository;
@@ -13,6 +14,8 @@ import com.ptit.poker.game.infrastructure.persistence.PokerHandRepository;
 import com.ptit.poker.room.api.dto.*;
 import com.ptit.poker.room.application.RoomApplicationService;
 import com.ptit.poker.room.domain.*;
+import com.ptit.poker.room.infrastructure.persistence.RoomPlayerEntity;
+import com.ptit.poker.room.infrastructure.persistence.RoomPlayerRepository;
 import com.ptit.poker.support.TestDatabaseSafetyInitializer;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
@@ -31,9 +34,14 @@ import org.springframework.messaging.converter.*;
 import org.springframework.messaging.simp.stomp.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.*;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
+
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
 
 @EnabledIfEnvironmentVariable(named="TEST_DB_URL", matches=".+")
 @EnabledIfEnvironmentVariable(named="TEST_DB_USERNAME", matches=".+")
@@ -48,7 +56,9 @@ class GameWebSocketStompMySqlIntegrationTests {
     @Autowired UserRepository users; @Autowired PasswordEncoder passwords; @Autowired JwtService jwt;
     @Autowired RoomApplicationService rooms; @Autowired GameRuntimeService runtime;
     @Autowired GameRealtimeApplicationService realtime; @Autowired PlayerActionRepository actions;
+    @Autowired RoomPlayerRepository roomPlayers;
     @Autowired PokerHandRepository hands;
+    @MockitoSpyBean GameRealtimePublisher gamePublisher;
     @Autowired ObjectMapper json; @Autowired RoomWebSocketStompMySqlIntegrationTests.SubscriptionProbe subscriptions;
     private final List<StompSession> sessions = new ArrayList<>();
     private final List<WebSocketStompClient> clients = new ArrayList<>();
@@ -68,8 +78,8 @@ class GameWebSocketStompMySqlIntegrationTests {
         rooms.join(first.getId(),roomId,new JoinRoomRequest(false,1,1_000L,null));
         rooms.join(second.getId(),roomId,new JoinRoomRequest(false,2,1_000L,null));
         rooms.join(spectator.getId(),roomId,new JoinRoomRequest(true,null,null,null));
-        rooms.setReady(first.getId(),roomId,true); rooms.setReady(second.getId(),roomId,true);
-        GameRuntimeView started=runtime.startGame(roomId);
+        readyWithoutAutoStart(roomId,first,second);
+        GameRuntimeView started=runtime.startGame(roomId,first.getId());
 
         Handler firstHandler=new Handler(), secondHandler=new Handler(), spectatorHandler=new Handler(), outsiderHandler=new Handler();
         StompSession firstSession=connect(first,firstHandler), secondSession=connect(second,secondHandler), spectatorSession=connect(spectator,spectatorHandler);
@@ -132,8 +142,41 @@ class GameWebSocketStompMySqlIntegrationTests {
         assertThat(await(secondPrivate,GameEventType.HOLE_CARDS).at("/payload/handId").asLong()).isNotEqualTo(started.handId());
     }
 
+    @Test void finalReadyCommandLeavesRoomWaitingUntilExplicitHostStart() throws Exception {
+        UserEntity first=user(),second=user();long roomId=rooms.create(first.getId(),new CreateRoomRequest(
+                "auto-stomp-"+UUID.randomUUID(),RoomType.PUBLIC,6,50,100,1_000,null)).room().id();
+        rooms.join(first.getId(),roomId,new JoinRoomRequest(false,1,1_000L,null));
+        rooms.join(second.getId(),roomId,new JoinRoomRequest(false,2,1_000L,null));
+        Handler firstHandler=new Handler(),secondHandler=new Handler();
+        StompSession firstSession=connect(first,firstHandler),secondSession=connect(second,secondHandler);
+        QueueFrames firstPrivate=new QueueFrames(),secondPrivate=new QueueFrames();
+        subscribe(firstSession,"/user/queue/private",firstPrivate);subscribe(secondSession,"/user/queue/private",secondPrivate);
+
+        firstSession.send("/app/room/"+roomId+"/ready",Map.of("clientCommandId",UUID.randomUUID(),"ready",true));
+        secondSession.send("/app/room/"+roomId+"/ready",Map.of("clientCommandId",UUID.randomUUID(),"ready",true));
+
+        awaitCondition(() -> rooms.detail(first.getId(),roomId).members().stream()
+                .filter(member -> member.seatNumber() != null)
+                .allMatch(member -> member.state() == RoomPlayerState.READY));
+        assertThat(runtime.currentViewByRoom(roomId)).isEmpty();
+        assertThat(rooms.detail(first.getId(),roomId).room().status()).isEqualTo(RoomStatus.WAITING);
+        assertThat(firstPrivate.poll(100,TimeUnit.MILLISECONDS)).isNull();
+        assertThat(secondPrivate.poll(100,TimeUnit.MILLISECONDS)).isNull();
+
+        GameRuntimeView explicitlyStarted=realtime.startGame(roomId,first.getId());
+        JsonNode firstHole=await(firstPrivate,GameEventType.HOLE_CARDS),secondHole=await(secondPrivate,GameEventType.HOLE_CARDS);
+        UUID gameId=UUID.fromString(firstHole.path("gameId").asText());
+        assertThat(secondHole.path("gameId").asText()).isEqualTo(gameId.toString());
+        assertThat(firstHole.path("roomId").asLong()).isEqualTo(roomId);
+        assertThat(runtime.currentView(gameId).players()).extracting(GameRuntimeView.PlayerView::userId)
+                .containsExactlyInAnyOrder(first.getId(),second.getId());
+        assertThat(explicitlyStarted.gameId()).isEqualTo(gameId);
+        verify(gamePublisher,timeout(5_000).times(1)).publishPublic(argThat(
+                event->event.type()==GameEventType.GAME_STARTED&&event.roomId()==roomId&&event.gameId().equals(gameId)));
+    }
+
     @Test void deadlineAutoFoldPersistsAndPublishesTerminalEvents() throws Exception {
-        Fixture fixture=fixture(); GameRuntimeView started=runtime.startGame(fixture.roomId());
+        Fixture fixture=fixture(); GameRuntimeView started=runtime.startGame(fixture.roomId(),fixture.first().getId());
         Handler handler=new Handler();StompSession session=connect(fixture.first(),handler);QueueFrames publicFrames=new QueueFrames(started);
         subscribe(session,"/topic/game/"+started.gameId(),publicFrames);realtime.announceStartedGame(started);
         await(publicFrames,GameEventType.TIMER_UPDATE);
@@ -148,7 +191,7 @@ class GameWebSocketStompMySqlIntegrationTests {
     }
 
     @Test void deadlineAutoCheckPersistsAndPublishesThenOldTurnCannotDuplicate() throws Exception {
-        Fixture fixture=fixture();GameRuntimeView started=runtime.startGame(fixture.roomId());
+        Fixture fixture=fixture();GameRuntimeView started=runtime.startGame(fixture.roomId(),fixture.first().getId());
         GameRuntimeView matched=runtime.applyAction(started.gameId(),started.currentTurnUserId(),new GameActionIntent(
                 started.turnId(),UUID.randomUUID(),com.ptit.poker.game.domain.betting.PokerActionType.CALL,0));
         Handler handler=new Handler();StompSession session=connect(fixture.second(),handler);QueueFrames publicFrames=new QueueFrames(matched);
@@ -165,11 +208,20 @@ class GameWebSocketStompMySqlIntegrationTests {
     private Fixture fixture(){UserEntity first=user(),second=user();long roomId=rooms.create(first.getId(),new CreateRoomRequest(
             "timer-"+UUID.randomUUID(),RoomType.PUBLIC,6,50,100,1_000,null)).room().id();
         rooms.join(first.getId(),roomId,new JoinRoomRequest(false,1,1_000L,null));rooms.join(second.getId(),roomId,new JoinRoomRequest(false,2,1_000L,null));
-        rooms.setReady(first.getId(),roomId,true);rooms.setReady(second.getId(),roomId,true);return new Fixture(roomId,first,second);}
+        readyWithoutAutoStart(roomId,first,second);return new Fixture(roomId,first,second);}
+    private void readyWithoutAutoStart(long roomId,UserEntity...players){for(UserEntity player:players){
+        RoomPlayerEntity member=roomPlayers.findByRoomIdAndUserId(roomId,player.getId()).orElseThrow();member.setReady(true);roomPlayers.saveAndFlush(member);}}
     private record Fixture(long roomId,UserEntity first,UserEntity second){}
 
     private JsonNode await(QueueFrames frames,GameEventType type)throws Exception{
         return await(frames,type,node->true);
+    }
+    private static void awaitCondition(java.util.function.BooleanSupplier condition) throws InterruptedException {
+        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
+        while(!condition.getAsBoolean()) {
+            if(System.nanoTime()>=deadline)throw new AssertionError("Timed out waiting for authoritative readiness");
+            Thread.sleep(20);
+        }
     }
     private JsonNode await(QueueFrames frames,GameEventType type,Predicate<JsonNode> identity)throws Exception{
         return frames.await(type,identity,15,TimeUnit.SECONDS);
@@ -209,6 +261,7 @@ class GameWebSocketStompMySqlIntegrationTests {
     private final class QueueFrames implements StompFrameHandler{
         private final Object monitor=new Object();private final List<JsonNode> history=new ArrayList<>();
         private final Set<Integer> consumed=new HashSet<>();private final GameRuntimeView expected;
+        private QueueFrames(){this.expected=null;}
         private QueueFrames(GameRuntimeView expected){this.expected=expected;}
         public Type getPayloadType(StompHeaders headers){return byte[].class;}
         public void handleFrame(StompHeaders headers,Object payload){synchronized(monitor){try{history.add(json.readTree((byte[])payload));}
@@ -228,7 +281,8 @@ class GameWebSocketStompMySqlIntegrationTests {
             for(int index=previous+1;index<history.size();index++)if(type.name().equals(history.get(index).path("type").asText())){found=index;break;}
             assertThat(found).as("event order "+Arrays.toString(types)+" in "+types()).isGreaterThan(previous);previous=found;}}}
         List<String> types(){synchronized(monitor){return history.stream().map(node->node.path("type").asText()).toList();}}
-        private AssertionError timeout(GameEventType type){GameRuntimeView current=null;boolean active=true;try{current=runtime.currentView(expected.gameId());}
+        private AssertionError timeout(GameEventType type){if(expected==null)return new AssertionError("Timed out waiting for "+type+": capturedTypes="+types());
+            GameRuntimeView current=null;boolean active=true;try{current=runtime.currentView(expected.gameId());}
             catch(RuntimeException failure){active=false;}long handCount=hands.findAllByGameSessionIdOrderByHandNumber(expected.gameSessionId()).size();
             long actionCount=actions.countByPokerHandId(expected.handId());boolean result=types().contains(GameEventType.GAME_RESULT.name());
             return new AssertionError("Timed out waiting for "+type+": gameId="+expected.gameId()+", expectedHandId="+expected.handId()

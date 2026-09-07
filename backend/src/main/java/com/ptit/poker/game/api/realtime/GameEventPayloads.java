@@ -29,7 +29,12 @@ public final class GameEventPayloads {
         public State { communityCards = List.copyOf(communityCards); players = List.copyOf(players); }
     }
     public record PublicPlayer(long userId, int seat, long tableChips, long currentBet,
-                               PokerPlayerState participation, boolean connected, boolean leaving) {}
+                               PokerPlayerState participation, boolean connected, boolean leaving, Long totalCommitted) {
+        public PublicPlayer(long userId, int seat, long tableChips, long currentBet,
+                            PokerPlayerState participation, boolean connected, boolean leaving) {
+            this(userId, seat, tableChips, currentBet, participation, connected, leaving, null);
+        }
+    }
     /** Phase 7A safe policy: no private cards are revealed until explicit muck/reveal state exists. */
     public record Showdown(long handId, List<Card> board) { public Showdown { board = List.copyOf(board); } }
     public record Award(int potIndex, String potType, long potAmount, List<Long> winnerUserIds,

@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.util.UUID;
 
 @Service
 @Profile("!bootstrap")
@@ -22,10 +23,11 @@ public class GameSessionPersistenceService {
         this.sessions = sessions; this.rooms = rooms; this.clock = clock;this.events=events;
     }
     @Transactional
-    public GameSessionView startSession(long roomId) {
+    public GameSessionView startSession(long roomId, UUID gameId) {
+        if (gameId == null) throw new IllegalArgumentException("gameId must not be null");
         if (roomId <= 0 || !rooms.exists(roomId)) throw error("ROOM_NOT_FOUND", "Room not found");
         return view(sessions.saveAndFlush(new GameSessionEntity(
-                roomId, GameSessionStatus.ACTIVE, clock.instant(), null)));
+                roomId, gameId, GameSessionStatus.ACTIVE, clock.instant(), null)));
     }
     @Transactional public GameSessionView finishSession(long id) { return transition(id, false); }
     @Transactional public GameSessionView abortSession(long id) { return transition(id, true); }

@@ -1,0 +1,2 @@
+import type { TimerPayload } from '../types/game'
+export function TurnTimer({timer}:{timer:TimerPayload|null}){if(!timer)return null;const warning=timer.remainingSeconds<=5;return <div className={`turn-timer ${warning?'turn-timer-warning':''}`} role="timer" aria-label={`${timer.remainingSeconds} seconds remaining`}><span>{timer.remainingSeconds}s</span><div><i style={{width:`${Math.min(100,(timer.remainingSeconds/30)*100)}%`}}/></div></div>}

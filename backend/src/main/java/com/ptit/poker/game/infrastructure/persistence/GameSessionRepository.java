@@ -11,4 +11,5 @@ public interface GameSessionRepository extends JpaRepository<GameSessionEntity, 
     @Query("select session from GameSessionEntity session where session.id = :id")
     Optional<GameSessionEntity> findByIdForUpdate(Long id);
     Optional<GameSessionEntity> findFirstByRoomIdAndStatusOrderByStartedAtDesc(Long roomId, GameSessionStatus status);
+    Optional<GameSessionEntity> findByGameId(String gameId);
 }

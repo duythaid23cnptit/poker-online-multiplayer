@@ -7,6 +7,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -32,9 +33,16 @@ class GameSessionPersistenceServiceTests {
     void missingRoomIsRejectedBeforePersistence() {
         when(rooms.exists(44L)).thenReturn(false);
 
-        assertThatThrownBy(() -> service.startSession(44L))
+        assertThatThrownBy(() -> service.startSession(44L, UUID.randomUUID()))
                 .isInstanceOfSatisfying(GameplayHistoryException.class,
                         error -> assertThat(error.code()).isEqualTo("ROOM_NOT_FOUND"));
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void newSessionRequiresItsAuthoritativeRuntimeGameId() {
+        assertThatThrownBy(() -> service.startSession(44L, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("gameId");
         verify(repository, never()).saveAndFlush(any());
     }
 
@@ -51,6 +59,7 @@ class GameSessionPersistenceServiceTests {
 
     @Test
     void startUsesInjectedClockAndActiveStatus() {
+        UUID gameId = UUID.randomUUID();
         when(rooms.exists(44L)).thenReturn(true);
         when(repository.saveAndFlush(any())).thenAnswer(invocation -> {
             GameSessionEntity entity = invocation.getArgument(0);
@@ -58,11 +67,12 @@ class GameSessionPersistenceServiceTests {
             return entity;
         });
 
-        service.startSession(44L);
+        service.startSession(44L, gameId);
 
         ArgumentCaptor<GameSessionEntity> saved = ArgumentCaptor.forClass(GameSessionEntity.class);
         verify(repository).saveAndFlush(saved.capture());
         assertThat(saved.getValue().getStatus()).isEqualTo(GameSessionStatus.ACTIVE);
         assertThat(saved.getValue().getStartedAt()).isEqualTo(NOW);
+        assertThat(saved.getValue().getGameId()).isEqualTo(gameId.toString());
     }
 }

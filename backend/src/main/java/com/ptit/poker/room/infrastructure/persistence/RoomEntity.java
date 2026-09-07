@@ -103,6 +103,12 @@ public class RoomEntity {
         lastActivityAt = activityAt;
     }
 
+    public void start(Instant activityAt) {
+        if (status != RoomStatus.WAITING) throw new IllegalStateException("only a waiting room can start");
+        status = RoomStatus.PLAYING;
+        lastActivityAt = activityAt;
+    }
+
     public void finish(Instant activityAt) {
         status = RoomStatus.FINISHED;
         lastActivityAt = activityAt;

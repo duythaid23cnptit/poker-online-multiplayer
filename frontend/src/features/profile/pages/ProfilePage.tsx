@@ -2,6 +2,9 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useEffect, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { ApiClientError, getErrorMessage } from '../../../shared/api/apiError'
+import { formatNumber } from '../../../shared/lib/format'
+import { LoadingState } from '../../../shared/ui/LoadingState'
+import { ErrorState } from '../../../shared/ui/ErrorState'
 import { Avatar } from '../../../shared/ui/Avatar'
 import { Button } from '../../../shared/ui/Button'
 import { Card } from '../../../shared/ui/Card'
@@ -13,7 +16,8 @@ import { useUpdateProfile } from '../hooks/useUpdateProfile'
 import { profileSchema, type ProfileFormValues } from '../schemas/profileSchema'
 
 export function ProfilePage() {
-  const { data: profile } = useCurrentProfile()
+  const profileQuery = useCurrentProfile()
+  const { data: profile } = profileQuery
   const update = useUpdateProfile()
   const [saved, setSaved] = useState(false)
   const { control, register, handleSubmit, reset, setError, formState: { errors, isDirty } } = useForm<ProfileFormValues>({
@@ -44,17 +48,19 @@ export function ProfilePage() {
     }
   })
 
-  if (!profile) return null
+  if (profileQuery.isError) return <main className="app-page"><ErrorState message={getErrorMessage(profileQuery.error)} onRetry={() => void profileQuery.refetch()} /></main>
+  if (!profile) return <main className="app-page"><LoadingState label="Loading your profile…" /></main>
   const previewName = watchedDisplayName || profile.displayName
   const previewAvatar = watchedAvatarUrl || null
   return (
-    <main className="app-page">
-      <PageHeader title="Your profile" description="Manage the safe identity other players see at the tables." />
+    <main className="app-page profile-page">
+      <PageHeader title="Your profile" description="Your identity and account at the tables." />
       <div className="mt-9 grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)]">
         <Card className="dashboard-card h-fit p-6 text-center">
           <div className="flex justify-center"><Avatar displayName={previewName} src={previewAvatar} size="lg" /></div>
           <h2 className="mt-4 truncate text-lg font-bold text-text">{previewName}</h2>
           <p className="mt-1 truncate text-sm text-muted">@{profile.username}</p>
+          <dl className="profile-balance"><dt>Account chips</dt><dd>{formatNumber(profile.accountChips)}</dd></dl>
           {profile.email && <p className="mt-4 break-all border-t border-border pt-4 text-xs text-secondary">{profile.email}</p>}
         </Card>
         <Card className="dashboard-card p-6 sm:p-8">

@@ -49,16 +49,16 @@ export function RegisterPage() {
         </div>
       )}
       <form className="mt-8 space-y-5" onSubmit={submit} noValidate>
-        <FormField id="username" label="Username" hint="Letters, numbers, underscore" error={errors.username?.message}>
+        <FormField reserveErrorSpace id="username" label="Username" hint="Letters, numbers, underscore" error={errors.username?.message}>
           <Input id="username" autoComplete="username" placeholder="Choose a username" invalid={Boolean(errors.username)} aria-describedby={`username-hint${errors.username ? ' username-error' : ''}`} disabled={registration.isPending} {...register('username')} />
         </FormField>
-        <FormField id="displayName" label="Display name" error={errors.displayName?.message}>
+        <FormField reserveErrorSpace id="displayName" label="Display name" error={errors.displayName?.message}>
           <Input id="displayName" autoComplete="nickname" placeholder="Name shown at the table" invalid={Boolean(errors.displayName)} aria-describedby={errors.displayName ? 'displayName-error' : undefined} disabled={registration.isPending} {...register('displayName')} />
         </FormField>
-        <FormField id="email" label="Email" hint="Optional" error={errors.email?.message}>
+        <FormField reserveErrorSpace id="email" label="Email" hint="Optional" error={errors.email?.message}>
           <Input id="email" type="email" autoComplete="email" placeholder="you@example.com" invalid={Boolean(errors.email)} aria-describedby={`email-hint${errors.email ? ' email-error' : ''}`} disabled={registration.isPending} {...register('email')} />
         </FormField>
-        <FormField id="password" label="Password" hint="8–72 characters" error={errors.password?.message}>
+        <FormField reserveErrorSpace id="password" label="Password" hint="8–72 characters" error={errors.password?.message}>
           <PasswordInput id="password" autoComplete="new-password" placeholder="Create a password" invalid={Boolean(errors.password)} aria-describedby={`password-hint${errors.password ? ' password-error' : ''}`} disabled={registration.isPending} {...register('password')} />
         </FormField>
         <Button type="submit" className="w-full" loading={registration.isPending} loadingLabel="Creating account…">Create account</Button>

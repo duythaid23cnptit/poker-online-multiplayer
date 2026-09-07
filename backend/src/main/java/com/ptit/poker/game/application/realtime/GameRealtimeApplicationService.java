@@ -12,7 +12,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,26 +31,54 @@ public class GameRealtimeApplicationService {
     private final TurnTimerConfiguration timerConfiguration;
     private final ReconnectGraceScheduler reconnectScheduler;
     private final ReconnectGraceConfiguration reconnectConfiguration;
+    private final RoomGameDiscoveryPublisher roomDiscovery;
+    private final HandTransitionScheduler handTransitions;
+    private final HandTransitionConfiguration handTransitionConfiguration;
     private final ConcurrentHashMap<UUID, ActiveTimer> activeTimers=new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, Object> eventLocks=new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, ActiveGrace> activeGrace=new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, GameRuntimeView> pendingRestorations=new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, PendingHandTransition> pendingHandTransitions=new ConcurrentHashMap<>();
     private final AtomicLong graceGeneration=new AtomicLong();
+    private final AtomicLong handTransitionGeneration=new AtomicLong();
 
     @Autowired
     public GameRealtimeApplicationService(GameRuntimeService runtime, GameRealtimePublisher publisher, Clock clock,
                                           TurnTimerScheduler timers, TurnTimerConfiguration timerConfiguration,
                                           ReconnectGraceScheduler reconnectScheduler,
-                                          ReconnectGraceConfiguration reconnectConfiguration) {
+                                          ReconnectGraceConfiguration reconnectConfiguration,
+                                          RoomGameDiscoveryPublisher roomDiscovery,
+                                          HandTransitionScheduler handTransitions,
+                                          HandTransitionConfiguration handTransitionConfiguration) {
         this.runtime = runtime; this.publisher = publisher; this.clock = clock;
         this.timers=timers; this.timerConfiguration=timerConfiguration;
         this.reconnectScheduler=reconnectScheduler; this.reconnectConfiguration=reconnectConfiguration;
+        this.roomDiscovery=roomDiscovery;
+        this.handTransitions=handTransitions; this.handTransitionConfiguration=handTransitionConfiguration;
     }
 
     GameRealtimeApplicationService(GameRuntimeService runtime, GameRealtimePublisher publisher, Clock clock,
                                    TurnTimerScheduler timers, TurnTimerConfiguration timerConfiguration) {
         this(runtime,publisher,clock,timers,timerConfiguration,(deadline,task)->()->{},
-                new ReconnectGraceConfiguration(Duration.ofSeconds(60)));
+                new ReconnectGraceConfiguration(Duration.ofSeconds(60)), view -> {}, (delay,task)->()->{},
+                () -> Duration.ofSeconds(6));
+    }
+
+    GameRealtimeApplicationService(GameRuntimeService runtime, GameRealtimePublisher publisher, Clock clock,
+                                   TurnTimerScheduler timers, TurnTimerConfiguration timerConfiguration,
+                                   ReconnectGraceScheduler reconnectScheduler,
+                                   ReconnectGraceConfiguration reconnectConfiguration) {
+        this(runtime, publisher, clock, timers, timerConfiguration, reconnectScheduler,
+                reconnectConfiguration, view -> {}, (delay,task)->()->{}, () -> Duration.ofSeconds(6));
+    }
+
+    GameRealtimeApplicationService(GameRuntimeService runtime, GameRealtimePublisher publisher, Clock clock,
+                                   TurnTimerScheduler timers, TurnTimerConfiguration timerConfiguration,
+                                   ReconnectGraceScheduler reconnectScheduler,
+                                   ReconnectGraceConfiguration reconnectConfiguration,
+                                   RoomGameDiscoveryPublisher roomDiscovery) {
+        this(runtime, publisher, clock, timers, timerConfiguration, reconnectScheduler,
+                reconnectConfiguration, roomDiscovery, (delay,task)->()->{}, () -> Duration.ofSeconds(6));
     }
 
     public void onLastDisconnect(long userId) {
@@ -77,6 +107,8 @@ public class GameRealtimeApplicationService {
                 grace.handle().cancel();
                 pendingRestorations.put(userId,transition.view());
                 publishPublic(transition.view(),GameEventType.GAME_STATE_UPDATE,state(transition.view()));
+                if (transition.view().handCompleted() && !transition.view().sessionFinished())
+                    scheduleNextHand(transition.view());
             });
         }
     }
@@ -90,7 +122,12 @@ public class GameRealtimeApplicationService {
         synchronized(eventLock(gameId)) {
             ActiveGrace grace=activeGrace.get(userId);
             if(grace==null||grace.generation()!=generation||!grace.gameId().equals(gameId))return;
-            if(runtime.expireReconnect(gameId,userId))activeGrace.remove(userId,grace);
+            runtime.expireReconnectWithView(gameId,userId).ifPresent(view -> {
+                activeGrace.remove(userId,grace);
+                publishPublic(view,GameEventType.GAME_STATE_UPDATE,state(view));
+                if (view.sessionFinished()) { cancelHandTransition(gameId); cancelTimer(gameId); }
+                else if (view.handCompleted()) scheduleNextHand(view);
+            });
             logTimerState("reconnect-grace-expired",gameId);
         }
     }
@@ -107,28 +144,60 @@ public class GameRealtimeApplicationService {
             publishTimerPrivate(view,userId,timer.deadline());
     }
 
-    public GameRuntimeView startGame(long roomId) {
-        GameRuntimeView view = runtime.startGame(roomId);
+    public GameRuntimeView startGame(long roomId, long requestingUserId) {
+        GameRuntimeView view = runtime.startGame(roomId, requestingUserId);
+        roomDiscovery.publishStarted(view);
         announceStartedGame(view);
         return view;
     }
 
     public void announceStartedGame(GameRuntimeView view) {
         synchronized(eventLock(view.gameId())) {
+            ensureCompletedLifecycle(view);
             publishPublic(view, GameEventType.GAME_STARTED, new Started(view.gameSessionId(), view.handId(), view.handNumber()));
-            publishHandStarted(view); replaceTimer(view);
+            publishHandStarted(view);
+            if (view.handCompleted()) {
+                publishPublic(view, GameEventType.GAME_STATE_UPDATE, state(view));
+                publishStoredCompletion(view);
+            }
+            replaceTimer(view);
         }
     }
 
     public GameRuntimeView startNextHand(UUID gameId) {
-        GameRuntimeView view = runtime.startNextHand(gameId);
-        if (view.sessionFinished()) {
-            publishPublic(view, GameEventType.GAME_STATE_UPDATE, state(view));
-            cancelTimer(view.gameId());
-        } else {
-            synchronized(eventLock(view.gameId())) { publishHandStarted(view); replaceTimer(view); }
+        synchronized(eventLock(gameId)) {
+            GameRuntimeView previous = runtime.currentView(gameId);
+            GameRuntimeView view = runtime.startNextHand(gameId);
+            if (view.sessionFinished()) {
+                publishPublic(view, GameEventType.GAME_STATE_UPDATE, state(view));
+                cancelHandTransition(view.gameId());
+                cancelTimer(view.gameId());
+            } else if (isNewHand(previous, view)) {
+                ensureCompletedLifecycle(view);
+                publishHandStarted(view);
+                if (view.handCompleted()) {
+                    publishPublic(view, GameEventType.GAME_STATE_UPDATE, state(view));
+                    publishStoredCompletion(view);
+                }
+                replaceTimer(view);
+            } else if (view.handCompleted() && !pendingHandTransitions.containsKey(gameId)) {
+                scheduleNextHand(view);
+            }
+            return view;
         }
-        return view;
+    }
+
+    public GameRuntimeService.DepartureRequest requestDeparture(UUID gameId, long userId) {
+        GameRuntimeService.DepartureRequest departure = runtime.requestDeparture(gameId, userId);
+        GameRuntimeView view = departure.view();
+        synchronized (eventLock(gameId)) {
+            publishPublic(view, GameEventType.GAME_STATE_UPDATE, state(view));
+            if (view.sessionFinished()) {
+                cancelHandTransition(gameId);
+                cancelTimer(gameId);
+            } else if (view.handCompleted()) scheduleNextHand(view);
+        }
+        return departure;
     }
 
     public void handleAction(UUID gameId, long userId, GameActionMessage message) {
@@ -144,6 +213,7 @@ public class GameRealtimeApplicationService {
 
     private void publishAccepted(GameActionOutcome outcome) {
         GameRuntimeView after = outcome.after();
+        ensureCompletedLifecycle(after);
         publishPublic(after, GameEventType.PLAYER_ACTION, new PlayerAction(outcome.userId(), outcome.seat(),
                 outcome.actionType(), outcome.amountCommitted(), outcome.resultingCurrentBet(),
                 outcome.resultingTableChips(), outcome.clientActionId(), outcome.automatic()));
@@ -156,6 +226,7 @@ public class GameRealtimeApplicationService {
     }
 
     private void publishCompletion(GameRuntimeView view, HandSettlementResult settlement) {
+        ensureCompletedLifecycle(view);
         String reason = settlement.foldOnly() ? "ALL_OTHERS_FOLDED" : "SHOWDOWN";
         if (!settlement.foldOnly()) publishPublic(view, GameEventType.SHOWDOWN, new Showdown(view.handId(), view.communityCards()));
         List<Award> awards = settlement.potAwards().stream().map(award -> new Award(award.potIndex(),
@@ -166,6 +237,89 @@ public class GameRealtimeApplicationService {
         publishPublic(view, GameEventType.GAME_RESULT, new Result(view.handId(), awards, returns, players(view), reason));
         publishPublic(view, GameEventType.HAND_FINISHED, new HandFinished(view.handId(), view.handNumber(), reason));
     }
+
+    private void publishStoredCompletion(GameRuntimeView view) {
+        runtime.completedSettlement(view.gameId(), view.handId()).ifPresentOrElse(
+                settlement -> publishCompletion(view, settlement),
+                () -> {
+                    LOGGER.error("Completed hand has no settlement snapshot game={} hand={}", view.gameId(), view.handId());
+                    scheduleNextHand(view);
+                });
+    }
+
+    private static boolean isNewHand(GameRuntimeView previous, GameRuntimeView current) {
+        return previous.handId() != current.handId() || previous.handNumber() != current.handNumber();
+    }
+
+    private void ensureCompletedLifecycle(GameRuntimeView view) {
+        if (view.handCompleted() && !view.sessionFinished() && !view.failed()) scheduleNextHand(view);
+    }
+
+    private void scheduleNextHand(GameRuntimeView completed) {
+        if (!completed.handCompleted() || completed.sessionFinished() || completed.failed()) return;
+        synchronized (eventLock(completed.gameId())) {
+            PendingHandTransition existing = pendingHandTransitions.get(completed.gameId());
+            if (existing != null && existing.handId() == completed.handId()
+                    && existing.handNumber() == completed.handNumber()) return;
+            if (existing != null) existing.handle().cancel();
+            long generation = handTransitionGeneration.incrementAndGet();
+            DeferredCancellation handle = new DeferredCancellation();
+            PendingHandTransition pending = new PendingHandTransition(
+                    completed.handId(), completed.handNumber(), generation, handle);
+            pendingHandTransitions.put(completed.gameId(), pending);
+            try {
+                handle.install(handTransitions.schedule(handTransitionConfiguration.interHandDelay(),
+                        () -> runNextHand(completed.gameId(), completed.handId(), completed.handNumber(), generation)));
+            } catch (RuntimeException failure) {
+                pendingHandTransitions.remove(completed.gameId(), pending);
+                throw failure;
+            }
+        }
+    }
+
+    private void runNextHand(UUID gameId, long handId, long handNumber, long generation) {
+        GameRuntimeView retry = null;
+        synchronized (eventLock(gameId)) {
+            PendingHandTransition pending = pendingHandTransitions.get(gameId);
+            if (pending == null || pending.handId() != handId || pending.handNumber() != handNumber
+                    || pending.generation() != generation) return;
+            try {
+                GameRuntimeView transitioned = startNextHand(gameId);
+                if (transitioned.handCompleted() && !transitioned.sessionFinished() && !transitioned.failed()
+                        && transitioned.handId() == handId && transitioned.handNumber() == handNumber) retry = transitioned;
+            } catch (GameRuntimeException failure) {
+                if ("NEXT_HAND_NOT_ALLOWED".equals(failure.code()) || "GAME_NOT_ACTIVE".equals(failure.code()))
+                    LOGGER.debug("Stale hand transition ignored game={} hand={} reason={}", gameId, handId, failure.code());
+                else {
+                    LOGGER.error("Hand transition failed game={} hand={} reason={}", gameId, handId, failure.code(), failure);
+                    retry = retryableCompletedView(gameId, handId, handNumber);
+                }
+            } catch (RuntimeException failure) {
+                LOGGER.error("Hand transition failed unexpectedly game={} hand={}", gameId, handId, failure);
+                retry = retryableCompletedView(gameId, handId, handNumber);
+            } finally {
+                pendingHandTransitions.remove(gameId, pending);
+            }
+        }
+        if (retry != null) scheduleNextHand(retry);
+    }
+
+    private GameRuntimeView retryableCompletedView(UUID gameId, long handId, long handNumber) {
+        try {
+            GameRuntimeView current = runtime.currentView(gameId);
+            return current.handCompleted() && !current.sessionFinished() && !current.failed()
+                    && current.handId() == handId && current.handNumber() == handNumber ? current : null;
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private void cancelHandTransition(UUID gameId) {
+        PendingHandTransition pending = pendingHandTransitions.remove(gameId);
+        if (pending != null) pending.handle().cancel();
+    }
+
+    boolean hasPendingHandTransition(UUID gameId) { return pendingHandTransitions.containsKey(gameId); }
 
     private void publishHandStarted(GameRuntimeView view) {
         publishPublic(view, GameEventType.HAND_STARTED, new HandStarted(view.handId(), view.handNumber(),
@@ -205,7 +359,7 @@ public class GameRealtimeApplicationService {
     }
     private List<PublicPlayer> players(GameRuntimeView view) {
         return view.players().stream().map(player -> new PublicPlayer(player.userId(), player.seat(), player.tableChips(),
-                player.currentBet(), player.participation(), player.connected(), player.leaving())).toList();
+                player.currentBet(), player.participation(), player.connected(), player.leaving(), player.totalCommitted())).toList();
     }
     private void publishPublic(GameRuntimeView view, GameEventType type, Object payload) {
         publisher.publishPublic(event(view, type, payload));
@@ -279,6 +433,15 @@ public class GameRealtimeApplicationService {
         publishPrivate(current,userId,GameEventType.TIMER_UPDATE,
                 new Timer(current.handId(),current.turnId(),seat,remaining,deadline));
     }
+
+    public TimerSnapshot currentTimer(UUID gameId, long handId, UUID turnId) {
+        ActiveTimer timer = activeTimers.get(gameId);
+        if (timer == null || timer.handId() != handId || !Objects.equals(timer.turnId(), turnId)) return null;
+        long remaining = Math.max(0, (Duration.between(clock.instant(), timer.deadline()).toMillis() + 999) / 1000);
+        return new TimerSnapshot(timer.deadline(), remaining);
+    }
+
+    public record TimerSnapshot(Instant deadline, long remainingSeconds) {}
     private void cancelTimer(UUID gameId) {
         ActiveTimer old=activeTimers.remove(gameId);if(old!=null){
             LOGGER.info("Turn deadline cancelled game={} hand={} turn={} deadline={} alreadyCancelled={} alreadyDone={}",
@@ -293,4 +456,33 @@ public class GameRealtimeApplicationService {
     private record ActiveTimer(long handId,UUID turnId,Instant deadline,TurnTimerScheduler.Cancellable deadlineHandle,
                                TurnTimerScheduler.Cancellable tickHandle) {}
     private record ActiveGrace(UUID gameId,long generation,Instant deadline,ReconnectGraceScheduler.Cancellable handle) {}
+    private record PendingHandTransition(long handId, long handNumber, long generation,
+                                         HandTransitionScheduler.Cancellable handle) {}
+
+    private static final class DeferredCancellation implements HandTransitionScheduler.Cancellable {
+        private final AtomicReference<HandTransitionScheduler.Cancellable> delegate = new AtomicReference<>();
+        private final AtomicBoolean cancellationRequested = new AtomicBoolean();
+
+        void install(HandTransitionScheduler.Cancellable scheduled) {
+            if (!delegate.compareAndSet(null, Objects.requireNonNull(scheduled)))
+                throw new IllegalStateException("hand transition handle already installed");
+            if (cancellationRequested.get()) scheduled.cancel();
+        }
+
+        @Override public void cancel() {
+            cancellationRequested.set(true);
+            HandTransitionScheduler.Cancellable scheduled = delegate.get();
+            if (scheduled != null) scheduled.cancel();
+        }
+
+        @Override public boolean isCancelled() {
+            HandTransitionScheduler.Cancellable scheduled = delegate.get();
+            return cancellationRequested.get() || scheduled != null && scheduled.isCancelled();
+        }
+
+        @Override public boolean isDone() {
+            HandTransitionScheduler.Cancellable scheduled = delegate.get();
+            return scheduled != null && scheduled.isDone();
+        }
+    }
 }

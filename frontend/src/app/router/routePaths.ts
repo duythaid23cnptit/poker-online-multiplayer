@@ -7,6 +7,7 @@ export const routes = {
   friends: '/app/friends',
   rankings: '/app/rankings',
   profile: '/app/profile',
+  game: (roomId: number, gameId: string) => `/app/rooms/${roomId}/games/${gameId}`,
 } as const
 
 export function safeAppReturnPath(value: unknown): string {

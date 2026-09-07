@@ -6,7 +6,7 @@ import com.ptit.poker.auth.infrastructure.persistence.UserRepository;
 import com.ptit.poker.auth.infrastructure.security.AuthenticatedUser;
 import com.ptit.poker.auth.infrastructure.security.JwtService;
 import com.ptit.poker.room.application.RoomApplicationService;
-import com.ptit.poker.game.application.runtime.GameRuntimeService;
+import com.ptit.poker.game.application.GameObservationQueryService;
 import java.util.UUID;
 import org.springframework.messaging.Message;
 import org.springframework.context.annotation.Profile;
@@ -27,10 +27,10 @@ public class WebSocketAuthenticationInterceptor implements ChannelInterceptor {
     private final JwtService jwt;
     private final UserRepository users;
     private final RoomApplicationService rooms;
-    private final GameRuntimeService games;
+    private final GameObservationQueryService games;
 
     public WebSocketAuthenticationInterceptor(JwtService jwt, UserRepository users, RoomApplicationService rooms,
-                                              GameRuntimeService games) {
+                                              GameObservationQueryService games) {
         this.jwt = jwt; this.users = users; this.rooms = rooms; this.games = games;
     }
 

@@ -1,0 +1,3 @@
+.profile-balance { margin-top: var(--space-5); border-top: 1px solid var(--color-border); padding-top: var(--space-4); }
+.profile-balance dt { color: var(--color-secondary); font-size: var(--text-label); }
+.profile-balance dd { margin-top: var(--space-1); color: var(--color-accent); font-size: var(--text-title); font-weight: 800; font-variant-numeric: tabular-nums; }

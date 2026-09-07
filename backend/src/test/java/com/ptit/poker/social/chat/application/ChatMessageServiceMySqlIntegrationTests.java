@@ -203,6 +203,51 @@ class ChatMessageServiceMySqlIntegrationTests {
                 fixture.room().getId())).isZero();
     }
 
+    @Test
+    void activeSeatedMemberReadsNewestBoundedHistoryChronologically() {
+        Fixture fixture = fixture(true);
+        ChatMessageView first = service.sendMessage(fixture.sender().getId(), fixture.room().getId(),
+                UUID.randomUUID().toString(), "first");
+        ChatMessageView second = service.sendMessage(fixture.sender().getId(), fixture.room().getId(),
+                UUID.randomUUID().toString(), "second");
+        ChatMessageView third = service.sendMessage(fixture.sender().getId(), fixture.room().getId(),
+                UUID.randomUUID().toString(), "third");
+
+        assertThat(service.findRecentMessages(fixture.sender().getId(), fixture.room().getId(), 2))
+                .extracting(ChatMessageView::messageId)
+                .containsExactly(second.messageId(), third.messageId())
+                .doesNotContain(first.messageId());
+    }
+
+    @Test
+    void activeSpectatorReadsHistoryWithSafeSenderProjection() {
+        Fixture fixture = fixture(false);
+        ChatMessageView sent = service.sendMessage(fixture.sender().getId(), fixture.room().getId(),
+                fixture.command().toString(), "spectator history");
+
+        assertThat(service.findRecentMessages(fixture.sender().getId(), fixture.room().getId(), 50))
+                .containsExactly(sent);
+        assertThat(sent.sender()).isEqualTo(new SocialPlayerQueryPort.SafePlayerSummary(
+                fixture.sender().getId(), "Alpha", null));
+    }
+
+    @Test
+    void outsiderAndDepartedMemberCannotReadHistory() {
+        Fixture fixture = fixture(true);
+        service.sendMessage(fixture.sender().getId(), fixture.room().getId(),
+                fixture.command().toString(), "private room message");
+        UserEntity outsider = user("Outsider");
+        assertCode(() -> service.findRecentMessages(outsider.getId(), fixture.room().getId(), 50),
+                "CHAT_NOT_ROOM_MEMBER");
+
+        RoomPlayerEntity member = members.findByRoomIdAndUserId(
+                fixture.room().getId(), fixture.sender().getId()).orElseThrow();
+        member.leave(Instant.parse("2026-08-30T01:00:00Z"));
+        members.saveAndFlush(member);
+        assertCode(() -> service.findRecentMessages(fixture.sender().getId(), fixture.room().getId(), 50),
+                "CHAT_NOT_ROOM_MEMBER");
+    }
+
     private Object concurrentSend(Fixture fixture, CountDownLatch ready, CountDownLatch start) {
         ready.countDown();
         try { start.await(); return send(fixture, "same"); }

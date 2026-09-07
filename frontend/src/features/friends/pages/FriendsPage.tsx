@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { getErrorMessage } from '../../../shared/api/apiError'
 import { Avatar } from '../../../shared/ui/Avatar'
@@ -30,6 +30,8 @@ function Person({ friendship, actions }: { friendship: FriendshipView; actions?:
 
 export function FriendsPage() {
   const friends = useFriends()
+  const [search, setSearch] = useState('')
+  const visibleFriends = (friends.data ?? []).filter((friend) => `${friend.otherPlayer.displayName} ${friend.otherPlayer.userId}`.toLowerCase().includes(search.trim().toLowerCase()))
   const incoming = useFriendRequests('incoming')
   const outgoing = useFriendRequests('outgoing')
   const send = useSendFriendRequest()
@@ -39,16 +41,18 @@ export function FriendsPage() {
   const { register, handleSubmit, reset, formState: { errors } } = useForm<SendFriendRequestFormValues>({ resolver: zodResolver(sendFriendRequestSchema) })
   const queries = [friends, incoming, outgoing]
   const error = queries.find((query) => query.isError)?.error
-  const submit = handleSubmit(async ({ recipientUserId }) => { await send.mutateAsync(recipientUserId); reset() })
+  const submit = handleSubmit(async ({ recipientUserId }) => { try { await send.mutateAsync(recipientUserId); reset() } catch { /* Render the mutation error below. */ } })
   return <main className="app-page">
-    <PageHeader title="Your poker circle" description="Manage requests and see the latest server-authoritative presence for accepted friends." />
+    <PageHeader title="Your poker circle" description="Manage requests and see when your friends are online." />
+    {(accept.error || reject.error || remove.error) && <div className="form-alert mt-4" role="alert">{getErrorMessage(accept.error || reject.error || remove.error)}</div>}
     {queries.some((query) => query.isPending) && <LoadingState variant="avatars" label="Loading your social circle…" />}
     {error && <ErrorState message={getErrorMessage(error)} onRetry={() => queries.forEach((query) => void query.refetch())} />}
     {!queries.some((query) => query.isPending) && !error && <div className="mt-8 grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.65fr)]">
       <div className="space-y-5">
         <Card className="dashboard-card p-5 sm:p-6">
           <div className="section-heading"><div><p>Connections</p><h2>Friends ({friends.data?.length || 0})</h2></div></div>
-          {!friends.data?.length ? <div className="mt-3"><EmptyState variant="compact" motif="suit" title="No accepted friends yet" description="Use the player ID panel to send your first request." /></div> : <ul className="mt-3 divide-y divide-border/70">{friends.data.map((item) => <Person key={item.requestId} friendship={item} actions={<Button variant="ghost" type="button" disabled={remove.isPending} onClick={() => remove.mutate(item.otherPlayer.userId)}>Remove</Button>} />)}</ul>}
+          {Boolean(friends.data?.length) && <Input className="mt-4" aria-label="Search friends" placeholder="Search your friends" value={search} onChange={(event) => setSearch(event.target.value)} />}
+          {!friends.data?.length ? <div className="mt-3"><EmptyState variant="compact" motif="suit" title="No accepted friends yet" description="Use the player ID panel to send your first request." /></div> : !visibleFriends.length ? <div className="mt-3"><EmptyState variant="inline" title="No matching friends" description="Try another name or player ID." /></div> : <ul className="mt-3 divide-y divide-border/70">{visibleFriends.map((item) => <Person key={item.requestId} friendship={item} actions={<Button variant="ghost" type="button" disabled={remove.isPending} onClick={() => remove.mutate(item.otherPlayer.userId)}>Remove</Button>} />)}</ul>}
         </Card>
         <div className="grid gap-5 lg:grid-cols-2">
           <Card className="dashboard-card p-5 sm:p-6"><div className="section-heading"><div><p>Action needed</p><h2>Incoming requests</h2></div></div>

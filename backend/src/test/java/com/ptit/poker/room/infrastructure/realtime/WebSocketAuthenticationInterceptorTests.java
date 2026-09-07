@@ -7,7 +7,7 @@ import com.ptit.poker.auth.infrastructure.persistence.UserRepository;
 import com.ptit.poker.auth.infrastructure.security.AuthenticatedUser;
 import com.ptit.poker.auth.infrastructure.security.JwtService;
 import com.ptit.poker.room.application.RoomApplicationService;
-import com.ptit.poker.game.application.runtime.GameRuntimeService;
+import com.ptit.poker.game.application.GameObservationQueryService;
 import org.junit.jupiter.api.Test;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.simp.stomp.StompCommand;
@@ -28,7 +28,7 @@ class WebSocketAuthenticationInterceptorTests {
     private final JwtService jwt = mock(JwtService.class);
     private final UserRepository users = mock(UserRepository.class);
     private final RoomApplicationService rooms = mock(RoomApplicationService.class);
-    private final GameRuntimeService games = mock(GameRuntimeService.class);
+    private final GameObservationQueryService games = mock(GameObservationQueryService.class);
     private final WebSocketAuthenticationInterceptor interceptor = new WebSocketAuthenticationInterceptor(jwt, users, rooms, games);
 
     @Test
@@ -68,7 +68,7 @@ class WebSocketAuthenticationInterceptorTests {
     }
 
     @Test
-    void gameSubscriptionRequiresRuntimeObservationRightsAndPrivateQueueIsOwnUserDestination() {
+    void gameSubscriptionRequiresAuthoritativeObservationRightsAndPrivateQueueIsOwnUserDestination() {
         AuthenticatedUser principal = new AuthenticatedUser(7L, "player", Role.PLAYER);
         activeUser(7L);
         var authentication = new UsernamePasswordAuthenticationToken(principal, null, List.of());

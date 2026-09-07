@@ -1,0 +1,13 @@
+.lobby-grid {
+  display: grid;
+  gap: var(--space-4);
+}
+
+@media (min-width: 1024px) {
+  .lobby-grid {
+    grid-template-columns: minmax(0, 1.45fr) minmax(19rem, 0.7fr);
+  }
+
+}
+
+.lobby-grid > * { min-width: 0; }

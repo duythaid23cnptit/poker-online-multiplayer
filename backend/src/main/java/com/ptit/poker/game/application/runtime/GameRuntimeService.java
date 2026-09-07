@@ -18,6 +18,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service @Profile("!bootstrap")
 public class GameRuntimeService {
@@ -39,19 +43,33 @@ public class GameRuntimeService {
         this(registry,rooms,sessions,history,decks,roomId->false);
     }
 
-    public GameRuntimeView startGame(long roomId) {
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public GameRuntimeView startGame(long roomId, long requestingUserId) {
+        RoomGamePort.RoomGameSnapshot room = rooms.loadForStart(roomId);
+        if (room.ownerUserId() != requestingUserId) throw new GameRuntimeException("ROOM_HOST_REQUIRED");
+        return startGame(room);
+    }
+
+    private GameRuntimeView startGame(RoomGamePort.RoomGameSnapshot room) {
+        long roomId = room.roomId();
         if (administrativeControl.hasPendingTerminationForRoom(roomId))
             throw new GameRuntimeException("ADMIN_TERMINATION_REQUESTED");
-        RoomGamePort.RoomGameSnapshot room = rooms.load(roomId);
-        List<RoomGamePort.RoomSeat> eligible = room.seats().stream()
-                .filter(s -> s.tableChips() > 0 && (s.state() == RoomPlayerState.READY || s.state() == RoomPlayerState.PLAYING))
+        if (room.status() != com.ptit.poker.room.domain.RoomStatus.WAITING)
+            throw new GameRuntimeException("ROOM_NOT_WAITING");
+        List<RoomGamePort.RoomSeat> seated = room.seats().stream()
                 .sorted(Comparator.comparingInt(RoomGamePort.RoomSeat::seatNumber)).toList();
-        if (eligible.size() < 2) throw new GameRuntimeException("INSUFFICIENT_PLAYERS");
+        if (seated.size() < 2) throw new GameRuntimeException("INSUFFICIENT_PLAYERS");
+        if (seated.stream().anyMatch(seat -> seat.state() != RoomPlayerState.READY))
+            throw new GameRuntimeException("PLAYERS_NOT_READY");
+        if (seated.stream().anyMatch(seat -> seat.tableChips() <= 0))
+            throw new GameRuntimeException("INVALID_PLAYER_STACK");
+        List<RoomGamePort.RoomSeat> eligible = seated;
         UUID gameId = UUID.randomUUID();
-        GameSessionView session = sessions.startSession(roomId);
+        GameSessionView session = sessions.startSession(roomId, gameId);
         ActiveGameContext context = new ActiveGameContext(gameId, session.id(), roomId);
         context.sessionMemberUserIds.addAll(eligible.stream().map(RoomGamePort.RoomSeat::userId).toList());
         if (!registry.register(context)) { sessions.abortSession(session.id()); throw new GameRuntimeException("GAME_ALREADY_ACTIVE"); }
+        removeRegistryEntryAfterRollback(context);
         try {
             startHand(context, room, eligible, eligible.getFirst().seatNumber());
             rooms.markPlaying(roomId, eligible.stream().map(RoomGamePort.RoomSeat::userId).toList());
@@ -59,6 +77,16 @@ public class GameRuntimeService {
         } catch (RuntimeException failure) {
             registry.remove(context); sessions.abortSession(session.id()); throw failure;
         }
+    }
+
+    private void removeRegistryEntryAfterRollback(ActiveGameContext context) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) return;
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status != TransactionSynchronization.STATUS_COMMITTED) registry.remove(context);
+            }
+        });
     }
 
     public GameRuntimeView applyAction(UUID gameId, long userId, GameActionIntent intent) {
@@ -73,7 +101,7 @@ public class GameRuntimeService {
         ActiveGameContext context = registry.require(gameId); context.lock.lock();
         try {
             requireMutable(context);
-            if (!automatic && context.administrativeDepartingUserIds.contains(userId))
+            if (!automatic && context.departingUserIds.contains(userId))
                 throw new GameRuntimeException("PLAYER_REMOVAL_PENDING");
             GameRuntimeView before = view(context);
             BettingAction action = new BettingAction(userId, intent.turnId(), intent.type(), intent.targetCurrentBet());
@@ -134,6 +162,29 @@ public class GameRuntimeService {
         try { return view(context); } finally { context.lock.unlock(); }
     }
 
+    public Optional<HandSettlementResult> completedSettlement(UUID gameId, long handId) {
+        ActiveGameContext context = registry.require(gameId); context.lock.lock();
+        try {
+            if (!context.handCompleted || context.history.pokerHandId() != handId) return Optional.empty();
+            return Optional.ofNullable(context.completedSettlement);
+        } finally { context.lock.unlock(); }
+    }
+
+    public Optional<GameRuntimeView> currentViewByRoom(long roomId) {
+        return registry.findByRoom(roomId).map(context -> {
+            context.lock.lock();
+            try { return view(context); } finally { context.lock.unlock(); }
+        });
+    }
+
+    public Optional<GameRuntimeView> currentViewByUser(long userId) {
+        return registry.findByUser(userId).flatMap(context -> {
+            context.lock.lock();
+            try { return context.sessionFinished ? Optional.empty() : Optional.of(view(context)); }
+            finally { context.lock.unlock(); }
+        });
+    }
+
     public Optional<GameConnectionTransition> disconnect(long userId) {
         Optional<ActiveGameContext> found = registry.findByUser(userId);
         if (found.isEmpty()) return Optional.empty();
@@ -141,7 +192,7 @@ public class GameRuntimeService {
         try {
             PokerPlayer player = context.state.players().stream().filter(value->value.userId()==userId).findFirst().orElse(null);
             if (player != null && !player.isConnected()) return Optional.empty();
-            if (!context.administrativeDepartingUserIds.contains(userId)) rooms.markDisconnected(context.roomId, userId);
+            if (!context.departingUserIds.contains(userId)) rooms.markDisconnected(context.roomId, userId);
             if(player!=null){player.markDisconnected();context.state.advanceStateVersion();}
             return Optional.of(new GameConnectionTransition(view(context), userId));
         } finally { context.lock.unlock(); }
@@ -154,23 +205,29 @@ public class GameRuntimeService {
         try {
             PokerPlayer player = context.state.players().stream().filter(value->value.userId()==userId).findFirst().orElse(null);
             if ((player != null && player.isConnected()) || context.reconnectExpiredUsers.contains(userId)
-                    || context.administrativeDepartingUserIds.contains(userId)) return Optional.empty();
+                    || context.departingUserIds.contains(userId)) return Optional.empty();
             rooms.markReconnected(context.roomId, userId);
             if(player!=null){player.markConnected();context.state.advanceStateVersion();}
             return Optional.of(new GameConnectionTransition(view(context), userId));
         } finally { context.lock.unlock(); }
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean expireReconnect(UUID gameId, long userId) {
+        return expireReconnectWithView(gameId, userId).isPresent();
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Optional<GameRuntimeView> expireReconnectWithView(UUID gameId, long userId) {
         ActiveGameContext context;
-        try { context = registry.require(gameId); } catch (GameRuntimeException ignored) { return false; }
+        try { context = registry.require(gameId); } catch (GameRuntimeException ignored) { return Optional.empty(); }
         context.lock.lock();
         try {
             PokerPlayer player = context.state.players().stream().filter(value->value.userId()==userId).findFirst().orElse(null);
-            if (player != null && player.isConnected()) return false;
+            if (player != null && player.isConnected()) return Optional.empty();
             boolean added=context.reconnectExpiredUsers.add(userId);
             if(added&&context.handCompleted)finalizeExpiredAndMaybeFinish(context);
-            return added;
+            return added ? Optional.of(view(context)) : Optional.empty();
         } finally { context.lock.unlock(); }
     }
 
@@ -196,10 +253,12 @@ public class GameRuntimeService {
         } finally {context.lock.unlock();}
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public GameRuntimeView startNextHand(UUID gameId) {
         ActiveGameContext context = registry.require(gameId); context.lock.lock();
         try {
             if (!context.handCompleted || context.failed || context.sessionFinished) throw new GameRuntimeException("NEXT_HAND_NOT_ALLOWED");
+            markRuntimeFailedAfterRollback(context);
             finalizeDeferredDepartures(context);
             if (context.administrativeTerminationRequested) {
                 finishAdministrativeTermination(context);
@@ -215,12 +274,29 @@ public class GameRuntimeService {
                 boolean liveGrace=sessionSeats.stream().anyMatch(seat->seat.state()==RoomPlayerState.DISCONNECTED
                         &&!context.reconnectExpiredUsers.contains(seat.userId()));
                 if(liveGrace)return view(context);
-                sessions.finishSession(context.sessionId); context.sessionFinished = true; registry.remove(context); return view(context);
+                finishSessionAndRoom(context);
+                return view(context);
             }
             int dealer = nextSeat(eligible, context.state.dealerPosition());
             startHand(context, room, eligible, dealer);
             return view(context);
+        } catch (RuntimeException failure) {
+            if (!(failure instanceof GameRuntimeException runtimeFailure
+                    && "NEXT_HAND_NOT_ALLOWED".equals(runtimeFailure.code()))) context.failed = true;
+            throw failure;
         } finally { context.lock.unlock(); }
+    }
+
+    private void markRuntimeFailedAfterRollback(ActiveGameContext context) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) return;
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status == TransactionSynchronization.STATUS_COMMITTED) return;
+                context.lock.lock();
+                try { context.failed = true; } finally { context.lock.unlock(); }
+            }
+        });
     }
 
     private void finalizeExpiredAndMaybeFinish(ActiveGameContext context) {
@@ -232,7 +308,7 @@ public class GameRuntimeService {
                 .anyMatch(seat->seat.state()==RoomPlayerState.DISCONNECTED
                         &&!context.reconnectExpiredUsers.contains(seat.userId()));
         if(continuing<2&&!liveGrace&&!context.sessionFinished){
-            sessions.finishSession(context.sessionId);context.sessionFinished=true;registry.remove(context);
+            finishSessionAndRoom(context);
         }
     }
 
@@ -244,23 +320,35 @@ public class GameRuntimeService {
 
     private void finalizeDeferredDepartures(ActiveGameContext context) {
         finalizeExpiredDepartures(context);
-        for (long userId : List.copyOf(context.administrativeDepartingUserIds)) {
+        for (long userId : List.copyOf(context.departingUserIds)) {
             rooms.finalizeActiveGameDeparture(context.roomId, userId);
             context.sessionMemberUserIds.remove(userId);
-            context.administrativeDepartingUserIds.remove(userId);
+            context.departingUserIds.remove(userId);
         }
     }
 
     public boolean requestAdministrativeRemoval(long roomId, long userId) {
         ActiveGameContext context = registry.findByRoom(roomId)
                 .orElseThrow(() -> new GameRuntimeException("GAME_NOT_ACTIVE"));
+        return requestDeparture(context, userId).changed();
+    }
+
+    public DepartureRequest requestDeparture(UUID gameId, long userId) {
+        return requestDeparture(registry.require(gameId), userId);
+    }
+
+    private DepartureRequest requestDeparture(ActiveGameContext context, long userId) {
         context.lock.lock();
         try {
+            if (context.sessionFinished) throw new GameRuntimeException("GAME_NOT_ACTIVE");
             if (!context.sessionMemberUserIds.contains(userId)) throw new GameRuntimeException("NOT_GAME_PARTICIPANT");
-            if (!context.administrativeDepartingUserIds.add(userId)) return false;
-            rooms.markAdministrativeLeaving(roomId, userId);
+            if (!context.departingUserIds.add(userId)) {
+                return new DepartureRequest(false, !context.handCompleted, view(context));
+            }
+            rooms.markLeaving(context.roomId, userId);
+            context.state.advanceStateVersion();
             if (context.handCompleted) finalizeDeferredDepartures(context);
-            return true;
+            return new DepartureRequest(true, !context.handCompleted, view(context));
         } finally { context.lock.unlock(); }
     }
 
@@ -281,6 +369,10 @@ public class GameRuntimeService {
     }
 
     private void finishAdministrativeTermination(ActiveGameContext context) {
+        finishSessionAndRoom(context);
+    }
+
+    private void finishSessionAndRoom(ActiveGameContext context) {
         if (context.sessionFinished) return;
         finalizeDeferredDepartures(context);
         for (long userId : List.copyOf(context.sessionMemberUserIds)) {
@@ -290,10 +382,21 @@ public class GameRuntimeService {
         sessions.finishSession(context.sessionId);
         rooms.finishRoom(context.roomId);
         context.sessionFinished = true;
-        registry.remove(context);
+        removeRegistryAfterCommitOrNow(context);
+    }
+
+    private void removeRegistryAfterCommitOrNow(ActiveGameContext context) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            registry.remove(context);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override public void afterCommit() { registry.remove(context); }
+        });
     }
 
     public record AdministrativeTermination(boolean changed, boolean deferred) {}
+    public record DepartureRequest(boolean changed, boolean deferred, GameRuntimeView view) {}
 
     private static boolean eligibleForNewHand(RoomGamePort.RoomSeat seat) {
         return seat.tableChips()>0&&(seat.state()==RoomPlayerState.PLAYING||seat.state()==RoomPlayerState.READY);
@@ -322,6 +425,7 @@ public class GameRuntimeService {
         GameState state = new GameState(c.gameId, UUID.randomUUID(), GamePhase.PRE_FLOP, dealer, sb, bb,
                 null, currentBet, room.bigBlind(), List.of(), players, Duration.ZERO, 0, null, room.bigBlind());
         c.handNumber++; c.smallBlind = room.smallBlind(); c.bigBlind = room.bigBlind(); c.state = state; c.deck = deck;
+        c.completedSettlement = null;
         boolean automaticRunout = players.stream().filter(PokerPlayer::canReceiveBettingTurn).count() <= 1;
         if (automaticRunout) {
             c.history = history.startHand(c.sessionId, c.handNumber, room.smallBlind(), room.bigBlind(), state);
@@ -341,6 +445,7 @@ public class GameRuntimeService {
                 result.foldOnly() ? HandCompletionReason.ALL_OTHERS_FOLDED : HandCompletionReason.SHOWDOWN);
         rooms.synchronizeTableChips(c.roomId, c.state.players().stream()
                 .map(p -> new RoomGamePort.PlayerStack(p.userId(), p.tableChips())).toList());
+        c.completedSettlement = result;
         c.handCompleted = true;
         finalizeDeferredDepartures(c);
         if (c.administrativeTerminationRequested) finishAdministrativeTermination(c);
@@ -371,7 +476,7 @@ public class GameRuntimeService {
                 c.smallBlind, c.bigBlind, c.state.communityCards(),
                 c.state.players().stream().map(p -> new GameRuntimeView.PlayerView(p.userId(),
                 p.seatNumber(), p.tableChips(), p.currentBet(), p.totalCommitted(), p.playerState(),
-                p.holeCards().size(), p.isConnected(), p.isLeaving())).toList(),
+                p.holeCards().size(), p.isConnected(), p.isLeaving() || c.departingUserIds.contains(p.userId()))).toList(),
                 c.handCompleted, c.sessionFinished, c.failed);
     }
 }

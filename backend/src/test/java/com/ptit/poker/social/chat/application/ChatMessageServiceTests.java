@@ -9,6 +9,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -16,6 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -133,6 +135,75 @@ class ChatMessageServiceTests {
 
         assertThatThrownBy(() -> service.sendMessage(7, 12, command.toString(), "hello")).isSameAs(failure);
         verify(messages, never()).findByCommandKeyForUpdate(anyLong(), anyLong(), anyString());
+    }
+
+    @Test
+    void activeMemberHistoryIsMappedChronologicallyWithOneBatchedSenderLookup() {
+        UUID secondCommand = UUID.randomUUID();
+        SocialPlayerQueryPort.SafePlayerSummary secondSender =
+                new SocialPlayerQueryPort.SafePlayerSummary(8, "Bravo", null);
+        ChatMessageRecord first = record("first");
+        ChatMessageRecord second = new ChatMessageRecord(
+                100, 12, 8, secondCommand.toString(), "second", NOW.plusSeconds(1));
+        when(messages.findRecentByRoomId(12, 50)).thenReturn(List.of(first, second));
+        when(players.findSafePlayerSummaries(any())).thenReturn(Map.of(7L, sender, 8L, secondSender));
+
+        List<ChatMessageView> history = service.findRecentMessages(7, 12, 50);
+
+        assertThat(history).extracting(ChatMessageView::messageId).containsExactly(99L, 100L);
+        assertThat(history).extracting(view -> view.sender().displayName())
+                .containsExactly("Alpha", "Bravo");
+        verify(players).findSafePlayerSummaries(java.util.Set.of(7L, 8L));
+    }
+
+    @Test
+    void spectatorHistoryUsesTheSameActiveMembershipContract() {
+        when(messages.findRecentByRoomId(12, 1)).thenReturn(List.of(record("hello")));
+
+        assertThat(service.findRecentMessages(7, 12, 1)).hasSize(1);
+    }
+
+    @Test
+    void maximumHistoryLimitIsAcceptedAndPassedAsABoundParameter() {
+        when(messages.findRecentByRoomId(12, 100)).thenReturn(List.of());
+
+        assertThat(service.findRecentMessages(7, 12, 100)).isEmpty();
+        verify(messages).findRecentByRoomId(12, 100);
+    }
+
+    @Test
+    void historyRejectsOutsiderInactiveAccountClosedAndUnknownRoom() {
+        when(rooms.find(12, 7)).thenReturn(Optional.of(new ChatRoomAccessPort.RoomAccess(
+                12, false, false, true)));
+        assertCode(() -> service.findRecentMessages(7, 12, 50), "CHAT_NOT_ROOM_MEMBER");
+
+        when(rooms.find(12, 7)).thenReturn(Optional.of(new ChatRoomAccessPort.RoomAccess(
+                12, false, true, false)));
+        assertCode(() -> service.findRecentMessages(7, 12, 50), "CHAT_NOT_ROOM_MEMBER");
+
+        when(rooms.find(12, 7)).thenReturn(Optional.of(new ChatRoomAccessPort.RoomAccess(
+                12, true, true, true)));
+        assertCode(() -> service.findRecentMessages(7, 12, 50), "CHAT_ROOM_CLOSED");
+
+        when(rooms.find(404, 7)).thenReturn(Optional.empty());
+        assertCode(() -> service.findRecentMessages(7, 404, 50), "CHAT_ROOM_NOT_FOUND");
+        verify(messages, never()).findRecentByRoomId(anyLong(), anyInt());
+    }
+
+    @Test
+    void historyRejectsInvalidLimitsBeforeAccessOrPersistence() {
+        assertCode(() -> service.findRecentMessages(7, 12, 0), "CHAT_INVALID_LIMIT");
+        assertCode(() -> service.findRecentMessages(7, 12, 101), "CHAT_INVALID_LIMIT");
+        verify(rooms, never()).find(anyLong(), anyLong());
+        verify(messages, never()).findRecentByRoomId(anyLong(), anyInt());
+    }
+
+    @Test
+    void historyRejectsMissingSafeSenderProjection() {
+        when(messages.findRecentByRoomId(12, 50)).thenReturn(List.of(record("hello")));
+        when(players.findSafePlayerSummaries(any())).thenReturn(Map.of());
+
+        assertCode(() -> service.findRecentMessages(7, 12, 50), "CHAT_SENDER_NOT_FOUND");
     }
 
     private ChatMessageRecord record(String content) {

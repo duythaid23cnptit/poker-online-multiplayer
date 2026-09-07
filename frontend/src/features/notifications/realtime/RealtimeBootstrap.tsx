@@ -6,6 +6,9 @@ import type { FriendshipView } from '../../friends/types/friend'
 import { stompSession } from '../../../shared/realtime/stompSession'
 import { useNotificationStore } from '../hooks/notificationStore'
 import { parseNotificationEvent } from './notificationEvent'
+import { parseGameEvent } from '../../game/realtime/gameEvent'
+import { useGameDiscoveryStore } from '../../game/hooks/gameDiscoveryStore'
+import { gameKeys } from '../../game/api/gameQueries'
 
 export function RealtimeBootstrap() {
   const queryClient = useQueryClient()
@@ -32,8 +35,15 @@ export function RealtimeBootstrap() {
         void queryClient.invalidateQueries({ queryKey: friendKeys.all })
       }
     })
+    const stopPrivate = stompSession.listen('/user/queue/private', (body) => {
+      const event = parseGameEvent(body)
+      if (event) useGameDiscoveryStore.getState().discover(event.roomId, event.gameId)
+    })
+    const stopConnection = stompSession.listenConnection((connected) => {
+      if (connected) void queryClient.invalidateQueries({ queryKey: gameKeys.activeMine() })
+    })
     stompSession.connect(accessToken)
-    return stopListening
+    return () => { stopListening(); stopPrivate(); stopConnection() }
   }, [accessToken, queryClient, status])
 
   return null

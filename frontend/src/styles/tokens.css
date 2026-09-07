@@ -1,0 +1,66 @@
+@theme {
+  --color-canvas: #080d12;
+  --color-surface: #111922;
+  --color-surface-elevated: #17212c;
+  --color-surface-hover: #1b2834;
+  --color-border: #273542;
+  --color-border-strong: #3a4b59;
+  --color-text: #f2f6f5;
+  --color-secondary: #aab8bd;
+  --color-muted: #94a4ad;
+  --color-accent: #58d6a3;
+  --color-accent-strong: #78e5b8;
+  --color-success: #5dd6a5;
+  --color-warning: #f0bc65;
+  --color-danger: #f47b83;
+  --color-focus: #91e8c4;
+  --radius-control: 0.75rem;
+  --radius-panel: 1.25rem;
+  --shadow-soft: 0 8px 30px rgb(0 0 0 / 0.16);
+  --shadow-panel: 0 24px 70px rgb(0 0 0 / 0.28);
+}
+
+@theme {
+  --radius-small: 0.5rem;
+  --radius-card: 0.875rem;
+  --radius-pill: 999px;
+  --text-caption: 0.6875rem;
+  --text-label: 0.75rem;
+  --text-body: 0.875rem;
+  --text-title: 1.25rem;
+  --shadow-seat: 0 0.7rem 1.2rem rgb(0 0 0 / 0.35);
+}
+
+:root {
+  --content-width: 90rem;
+  --game-content-width: 106rem;
+  --page-padding: clamp(1rem, 2.2vw, 2rem);
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --duration-fast: 120ms;
+  --duration-normal: 180ms;
+  --duration-slow: 300ms;
+  --layer-decoration: -1;
+  --layer-table: 2;
+  --layer-seat: 4;
+  --layer-cards: 6;
+  --layer-result: 7;
+  --layer-header: 30;
+  --layer-modal: 50;
+  --rgb-accent: 88 214 163;
+  --rgb-border: 39 53 66;
+  --rgb-border-strong: 58 75 89;
+  --rgb-warning: 240 188 101;
+  --rgb-danger: 244 123 131;
+  --rgb-focus: 145 232 196;
+  --rgb-surface: 17 25 34;
+  --rgb-elevated: 23 33 44;
+  --rgb-canvas: 8 13 18;
+}

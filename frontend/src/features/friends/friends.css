@@ -1,0 +1,27 @@
+.friend-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.7rem;
+  padding-block: 0.68rem;
+}
+
+@media (max-width: 639px) {
+  .friend-row {
+    flex-wrap: wrap;
+  }
+
+  .friend-actions {
+    width: 100%;
+    padding-left: 2.95rem;
+  }
+
+  .friend-actions>button {
+    flex: 1;
+  }
+
+}
+
+
+.friend-row { flex-wrap: wrap; }
+.friend-actions { margin-left: auto; }

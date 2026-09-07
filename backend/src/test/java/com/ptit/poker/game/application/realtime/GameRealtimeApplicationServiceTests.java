@@ -12,6 +12,7 @@ import com.ptit.poker.game.domain.settlement.HandSettlementResult;
 import com.ptit.poker.game.domain.state.*;
 import java.time.*;
 import java.util.*;
+import java.lang.reflect.Modifier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -21,19 +22,33 @@ class GameRealtimeApplicationServiceTests {
     private final UUID gameId = UUID.randomUUID(), turnId = UUID.randomUUID();
     private GameRealtimeApplicationService service;
     private final TurnTimerScheduler timers=mock(TurnTimerScheduler.class);
+    private final RoomGameDiscoveryPublisher roomDiscovery=mock(RoomGameDiscoveryPublisher.class);
     @BeforeEach void setUp() {
         when(timers.schedule(any(),any())).thenReturn(()->{});when(timers.scheduleAtFixedRate(any(),any())).thenReturn(()->{});
         service = new GameRealtimeApplicationService(runtime, publisher,
             Clock.fixed(Instant.parse("2026-08-27T00:00:00Z"), ZoneOffset.UTC),timers,
             new TurnTimerConfiguration(){public Duration turnTimeout(){return Duration.ofSeconds(30);}
-                public Duration updateCadence(){return Duration.ofSeconds(1);}}); }
+                public Duration updateCadence(){return Duration.ofSeconds(1);}},(deadline,task)->()->{},
+                new ReconnectGraceConfiguration(Duration.ofSeconds(60)),roomDiscovery); }
+
+    @Test void onlyRequesterAwarePublicStartEntryPointsExist() {
+        for (Class<?> type : List.of(GameRealtimeApplicationService.class, GameRuntimeService.class)) {
+            var starts = Arrays.stream(type.getDeclaredMethods())
+                    .filter(method -> method.getName().equals("startGame") && Modifier.isPublic(method.getModifiers()))
+                    .toList();
+            assertThat(starts).singleElement().satisfies(method ->
+                    assertThat(method.getParameterTypes()).containsExactly(long.class, long.class));
+        }
+    }
 
     @Test void startPublishesPublicBeforePrivateAndNeverLeaksHoleCards() {
         GameRuntimeView view = view(GamePhase.PRE_FLOP, List.of(), 7, false, 1L);
-        when(runtime.startGame(9)).thenReturn(view);
+        when(runtime.startGame(9, 7)).thenReturn(view);
         when(runtime.privateView(gameId, 1)).thenReturn(privateView(1, List.of(card(Rank.ACE), card(Rank.KING)), true));
         when(runtime.privateView(gameId, 2)).thenReturn(privateView(2, List.of(card(Rank.QUEEN), card(Rank.JACK)), false));
-        service.startGame(9);
+        service.startGame(9, 7);
+        verify(runtime).startGame(9, 7);
+        verify(roomDiscovery).publishStarted(view);
         assertThat(publisher.all).extracting(Sent::type).containsExactly(GameEventType.GAME_STARTED,
                 GameEventType.HAND_STARTED, GameEventType.HOLE_CARDS, GameEventType.HOLE_CARDS,
                 GameEventType.YOUR_TURN,GameEventType.TIMER_UPDATE);
@@ -41,6 +56,29 @@ class GameRealtimeApplicationServiceTests {
         assertThat(publisher.all.get(3).userId()).isEqualTo(2);
         assertThat(publisher.all.get(4).userId()).isEqualTo(1);
         assertThat(publisher.publicEvents()).allSatisfy(event -> assertThat(event.payload()).isNotInstanceOf(HoleCards.class));
+    }
+
+    @Test void failedRuntimeStartDoesNotPublishFalseRoomDiscovery() {
+        when(runtime.startGame(9, 7)).thenThrow(new GameRuntimeException("INSUFFICIENT_PLAYERS"));
+        assertThatThrownBy(() -> service.startGame(9, 7)).isInstanceOf(GameRuntimeException.class);
+        verifyNoInteractions(roomDiscovery);
+    }
+
+    @Test void departurePublishesAuthoritativeLeavingState() {
+        GameRuntimeView leaving = new GameRuntimeView(gameId, 20, 9, 30, 1, 1, 1, 2,
+                GamePhase.PRE_FLOP, 1L, turnId, 8, 100, 100, 50, 100, List.of(),
+                List.of(new GameRuntimeView.PlayerView(1, 1, 900, 100, 100,
+                        PokerPlayerState.ACTIVE, 2, true, true)), false, false, false);
+        var departure = new GameRuntimeService.DepartureRequest(true, true, leaving);
+        when(runtime.requestDeparture(gameId, 1)).thenReturn(departure);
+
+        assertThat(service.requestDeparture(gameId, 1)).isSameAs(departure);
+
+        assertThat(publisher.publicEvents()).singleElement().satisfies(event -> {
+            assertThat(event.type()).isEqualTo(GameEventType.GAME_STATE_UPDATE);
+            assertThat(((State) event.payload()).players()).singleElement()
+                    .satisfies(player -> assertThat(player.leaving()).isTrue());
+        });
     }
 
     @Test void acceptedActionPublishesOneAuthoritativeActionAndPreservesIdsAndVersion() {

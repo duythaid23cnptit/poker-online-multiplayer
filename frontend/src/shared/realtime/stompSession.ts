@@ -10,6 +10,7 @@ export interface StompClientPort {
   activate(): void
   deactivate(): Promise<void>
   subscribe(destination: string, callback: (message: IMessage) => void): StompSubscriptionPort
+  publish(parameters: { destination: string; body: string }): void
 }
 
 export type StompClientFactory = (config: StompConfig) => StompClientPort
@@ -18,6 +19,7 @@ export class StompSessionManager {
   private client: StompClientPort | null = null
   private readonly handlers = new Map<string, Set<(body: string) => void>>()
   private readonly subscriptions = new Map<string, StompSubscriptionPort>()
+  private readonly connectionHandlers = new Set<(connected: boolean) => void>()
 
   constructor(
     private readonly brokerUrl: string,
@@ -38,9 +40,22 @@ export class StompSessionManager {
       heartbeatIncoming: 10_000,
       heartbeatOutgoing: 10_000,
       debug: () => undefined,
-      onConnect: () => this.subscribeAll(),
+      onConnect: () => { this.subscribeAll(); this.notifyConnection(true) },
+      onWebSocketClose: () => { this.subscriptions.clear(); this.notifyConnection(false) },
     })
     this.client.activate()
+  }
+
+  send(destination: string, body: unknown): boolean {
+    if (!this.client?.connected) return false
+    this.client.publish({ destination, body: JSON.stringify(body) })
+    return true
+  }
+
+  listenConnection(handler: (connected: boolean) => void): () => void {
+    this.connectionHandlers.add(handler)
+    handler(Boolean(this.client?.connected))
+    return () => { this.connectionHandlers.delete(handler) }
   }
 
   listen(destination: string, handler: (body: string) => void): () => void {
@@ -64,6 +79,7 @@ export class StompSessionManager {
     for (const subscription of this.subscriptions.values()) subscription.unsubscribe()
     this.subscriptions.clear()
     if (client?.active) await client.deactivate()
+    this.notifyConnection(false)
   }
 
   isActive(): boolean {
@@ -80,6 +96,10 @@ export class StompSessionManager {
       for (const handler of this.handlers.get(destination) || []) handler(message.body)
     })
     this.subscriptions.set(destination, subscription)
+  }
+
+  private notifyConnection(connected: boolean): void {
+    for (const handler of this.connectionHandlers) handler(connected)
   }
 }
 

@@ -63,7 +63,7 @@ class DisconnectReconnectStompMySqlIntegrationTests {
         finally{clients.forEach(WebSocketStompClient::stop);subscriptions.reset();}if(unexpected!=null)throw unexpected;}
 
     @Test void lastOfTwoSessionsDisconnectsOnceAndReconnectRestoresPrivately() throws Exception {
-        Fixture f=fixture();GameRuntimeView started=runtime.startGame(f.roomId());
+        Fixture f=fixture();GameRuntimeView started=runtime.startGame(f.roomId(),f.first().getId());
         StompSession observer=connect(f.first());QueueFrames roomEvents=new QueueFrames();
         subscribe(observer,"/topic/room/"+f.roomId(),roomEvents);
         StompSession b1=connect(f.second()),b2=connect(f.second());
@@ -93,7 +93,7 @@ class DisconnectReconnectStompMySqlIntegrationTests {
     }
 
     @Test void completedHeadsUpHandWaitsAndReconnectResumesSameSession() throws Exception {
-        Fixture f=fixture();GameRuntimeView started=runtime.startGame(f.roomId());long accountBefore=accountChips(f.second());
+        Fixture f=fixture();GameRuntimeView started=runtime.startGame(f.roomId(),f.first().getId());long accountBefore=accountChips(f.second());
         StompSession observer=connect(f.first());QueueFrames roomEvents=new QueueFrames();subscribe(observer,"/topic/room/"+f.roomId(),roomEvents);
         StompSession b=connect(f.second());disconnectQuietly(b);await(roomEvents,"PLAYER_DISCONNECTED");
         awaitTrue(()->member(f).getPlayerState()==RoomPlayerState.DISCONNECTED,"B disconnected");
@@ -117,7 +117,7 @@ class DisconnectReconnectStompMySqlIntegrationTests {
     }
 
     @Test void graceExpiryAfterCompletedHandCashOutsOnceAndFinishesSession() throws Exception {
-        Fixture f=fixture();GameRuntimeView started=runtime.startGame(f.roomId());long accountBefore=accountChips(f.second());
+        Fixture f=fixture();GameRuntimeView started=runtime.startGame(f.roomId(),f.first().getId());long accountBefore=accountChips(f.second());
         StompSession observer=connect(f.first());QueueFrames roomEvents=new QueueFrames();subscribe(observer,"/topic/room/"+f.roomId(),roomEvents);
         StompSession b=connect(f.second());disconnectQuietly(b);await(roomEvents,"PLAYER_DISCONNECTED");
         realtime.handleAction(started.gameId(),started.currentTurnUserId(),new com.ptit.poker.game.api.realtime.GameActionMessage(
@@ -142,7 +142,7 @@ class DisconnectReconnectStompMySqlIntegrationTests {
     }
 
     @Test void reconnectingCurrentActorReceivesOnlyOwnCardsAndOriginalTurnDeadline() throws Exception {
-        Fixture f=fixture();GameRuntimeView started=runtime.startGame(f.roomId());
+        Fixture f=fixture();GameRuntimeView started=runtime.startGame(f.roomId(),f.first().getId());
         UserEntity actor=started.currentTurnUserId().equals(f.first().getId())?f.first():f.second();
         UserEntity other=actor.getId().equals(f.first().getId())?f.second():f.first();
         StompSession observer=connect(other);QueueFrames publicFrames=new QueueFrames(),roomEvents=new QueueFrames();
@@ -168,7 +168,7 @@ class DisconnectReconnectStompMySqlIntegrationTests {
     }
 
     @Test void disconnectDuringTurnCreatesNoActionAndExistingDeadlineCreatesExactlyOne() throws Exception {
-        Fixture f=fixture();GameRuntimeView started=runtime.startGame(f.roomId());
+        Fixture f=fixture();GameRuntimeView started=runtime.startGame(f.roomId(),f.first().getId());
         UserEntity actor=started.currentTurnUserId().equals(f.first().getId())?f.first():f.second();
         UserEntity observerUser=actor.getId().equals(f.first().getId())?f.second():f.first();
         StompSession observer=connect(observerUser);QueueFrames publicFrames=new QueueFrames(),roomEvents=new QueueFrames();
@@ -187,7 +187,7 @@ class DisconnectReconnectStompMySqlIntegrationTests {
     }
 
     @Test void foldedPlayerDisconnectAndReconnectPreservesFoldAndCommitment() throws Exception {
-        ThreeFixture f=threeFixture();GameRuntimeView started=runtime.startGame(f.roomId());
+        ThreeFixture f=threeFixture();GameRuntimeView started=runtime.startGame(f.roomId(),f.first().getId());
         StompSession observer=connect(f.first());QueueFrames roomEvents=new QueueFrames();subscribe(observer,"/topic/room/"+f.roomId(),roomEvents);
         StompSession actorSession=connect(f.second());
         realtime.handleAction(started.gameId(),started.currentTurnUserId(),new com.ptit.poker.game.api.realtime.GameActionMessage(
@@ -209,7 +209,7 @@ class DisconnectReconnectStompMySqlIntegrationTests {
     }
 
     @Test void allInDisconnectExpiryPreservesSettlementAndPotEligibility() throws Exception {
-        Fixture f=fixture();GameRuntimeView started=runtime.startGame(f.roomId());
+        Fixture f=fixture();GameRuntimeView started=runtime.startGame(f.roomId(),f.first().getId());
         UserEntity actor=started.currentTurnUserId().equals(f.first().getId())?f.first():f.second();
         UserEntity other=actor.getId().equals(f.first().getId())?f.second():f.first();
         StompSession observer=connect(other);QueueFrames roomEvents=new QueueFrames();subscribe(observer,"/topic/room/"+f.roomId(),roomEvents);
@@ -236,7 +236,7 @@ class DisconnectReconnectStompMySqlIntegrationTests {
     }
 
     @Test void disconnectedThirdPlayerIsNotInjectedIntoCurrentTwoPlayerHand() throws Exception {
-        ThreeFixture f=threeFixture();GameRuntimeView started=runtime.startGame(f.roomId());
+        ThreeFixture f=threeFixture();GameRuntimeView started=runtime.startGame(f.roomId(),f.first().getId());
         StompSession observer=connect(f.first());QueueFrames roomEvents=new QueueFrames();subscribe(observer,"/topic/room/"+f.roomId(),roomEvents);
         StompSession cSession=connect(f.third());disconnectQuietly(cSession);await(roomEvents,"PLAYER_DISCONNECTED");
         GameRuntimeView current=runtime.currentView(started.gameId());
@@ -258,12 +258,14 @@ class DisconnectReconnectStompMySqlIntegrationTests {
     private Fixture fixture(){UserEntity first=user(),second=user();long roomId=rooms.create(first.getId(),new CreateRoomRequest(
             "g7c2-"+shortId(),RoomType.PUBLIC,6,50,100,1_000,null)).room().id();
         rooms.join(first.getId(),roomId,new JoinRoomRequest(false,1,1_000L,null));rooms.join(second.getId(),roomId,new JoinRoomRequest(false,2,1_000L,null));
-        rooms.setReady(first.getId(),roomId,true);rooms.setReady(second.getId(),roomId,true);return new Fixture(roomId,first,second);}
+        readyWithoutAutoStart(roomId,first,second);return new Fixture(roomId,first,second);}
     private ThreeFixture threeFixture(){UserEntity first=user(),second=user(),third=user();long roomId=rooms.create(first.getId(),new CreateRoomRequest(
             "g7c3-"+shortId(),RoomType.PUBLIC,6,50,100,1_000,null)).room().id();
         rooms.join(first.getId(),roomId,new JoinRoomRequest(false,1,1_000L,null));rooms.join(second.getId(),roomId,new JoinRoomRequest(false,2,1_000L,null));
-        rooms.join(third.getId(),roomId,new JoinRoomRequest(false,3,1_000L,null));rooms.setReady(first.getId(),roomId,true);
-        rooms.setReady(second.getId(),roomId,true);rooms.setReady(third.getId(),roomId,true);return new ThreeFixture(roomId,first,second,third);}
+        rooms.join(third.getId(),roomId,new JoinRoomRequest(false,3,1_000L,null));readyWithoutAutoStart(roomId,first,second,third);
+        return new ThreeFixture(roomId,first,second,third);}
+    private void readyWithoutAutoStart(long roomId,UserEntity...users){for(UserEntity user:users){RoomPlayerEntity member=
+        roomPlayers.findByRoomIdAndUserId(roomId,user.getId()).orElseThrow();member.setReady(true);roomPlayers.saveAndFlush(member);}}
     private RoomPlayerEntity member(Fixture f){return roomPlayers.findByRoomIdAndUserId(f.roomId(),f.second().getId()).orElseThrow();}
     private RoomPlayerEntity member(Fixture f,UserEntity user){return roomPlayers.findByRoomIdAndUserId(f.roomId(),user.getId()).orElseThrow();}
     private static GameRuntimeView.PlayerView player(GameRuntimeView view,long userId){return view.players().stream().filter(player->player.userId()==userId).findFirst().orElseThrow();}

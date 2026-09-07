@@ -33,6 +33,9 @@ public class PokerHandEntity {
     public Long getId() { return id; }
     public Long getGameSessionId() { return gameSessionId; }
     public long getHandNumber() { return handNumber; }
+    public int getDealerSeat() { return dealerSeat; }
+    public int getSmallBlindSeat() { return smallBlindSeat; }
+    public int getBigBlindSeat() { return bigBlindSeat; }
     public GamePhase getFinalPhase() { return finalPhase; }
     public String getBoardCards() { return boardCards; }
     public HandEndReason getEndReason() { return endReason; }

@@ -50,3 +50,12 @@ describe('API error normalization', () => {
     )
   })
 })
+
+it('maps insufficient chips to a useful join message', () => {
+  expect(safeErrorMessage(409, 'INSUFFICIENT_CHIPS')).toBe("You don't have enough chips to join this table.")
+})
+
+it('maps atomic seat conflicts to an actionable seat-selection message', () => {
+  expect(safeErrorMessage(409, 'SEAT_OCCUPIED')).toBe('Seat is no longer available. Choose another seat.')
+  expect(safeErrorMessage(409, 'SEAT_OR_MEMBERSHIP_CONFLICT')).toBe('Seat is no longer available. Choose another seat.')
+})

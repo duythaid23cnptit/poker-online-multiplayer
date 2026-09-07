@@ -25,16 +25,30 @@ public class RoomGameAdapter implements RoomGamePort {
     @Override @Transactional(readOnly = true)
     public RoomGameSnapshot load(long roomId) {
         RoomEntity room = rooms.findById(roomId).orElseThrow(() -> new IllegalArgumentException("room not found"));
+        return snapshot(room);
+    }
+    @Override @Transactional
+    public RoomGameSnapshot loadForStart(long roomId) {
+        RoomEntity room = rooms.findByIdForUpdate(roomId)
+                .orElseThrow(() -> new com.ptit.poker.game.application.runtime.GameRuntimeException("ROOM_NOT_FOUND"));
+        return snapshot(room);
+    }
+    private RoomGameSnapshot snapshot(RoomEntity room) {
+        long roomId = room.getId();
         List<RoomSeat> seats = players.findAllByRoomIdAndLeftAtIsNullOrderById(roomId).stream()
                 .filter(p -> p.getSeatNumber() != null)
                 .sorted(Comparator.comparingInt(RoomPlayerEntity::getSeatNumber))
                 .map(p -> new RoomSeat(p.getUserId(), p.getSeatNumber(), p.getTableChips(), p.getPlayerState()))
                 .toList();
-        return new RoomGameSnapshot(roomId, room.getSmallBlind(), room.getBigBlind(), seats);
+        return new RoomGameSnapshot(roomId, room.getOwnerUserId(), room.getStatus(),
+                room.getSmallBlind(), room.getBigBlind(), seats);
     }
     @Override @Transactional
     public void markPlaying(long roomId, List<Long> userIds) {
+        RoomEntity room = rooms.findByIdForUpdate(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("room not found"));
         for (long userId : userIds) require(roomId, userId).markPlaying();
+        room.start(clock.instant());
     }
     @Override @Transactional
     public void synchronizeTableChips(long roomId, List<PlayerStack> stacks) {
@@ -66,7 +80,7 @@ public class RoomGameAdapter implements RoomGamePort {
                 Map.of("userId",userId),RoomEventType.PLAYER_COUNT_CHANGED,Map.of("roomId",roomId)));
     }
     @Override @Transactional
-    public void markAdministrativeLeaving(long roomId, long userId) { require(roomId, userId).markLeaving(); }
+    public void markLeaving(long roomId, long userId) { require(roomId, userId).markLeaving(); }
     @Override @Transactional
     public void finishRoom(long roomId) {
         rooms.findByIdForUpdate(roomId).orElseThrow(() -> new IllegalArgumentException("room not found"))

@@ -59,15 +59,15 @@ class ReconnectLifecycleApplicationTests {
         when(runtime.reconnect(1)).thenReturn(Optional.of(new GameRuntimeService.GameConnectionTransition(connected,1)));
         when(runtime.privateView(game,1)).thenReturn(new GamePlayerPrivateView(1,5,game,turn,10,List.of(),LegalActions.none(),900));
         service.onLastDisconnect(1);Runnable stale=grace.task;service.onFirstConnection(1);service.onPrivateSubscription(1);stale.run();
-        verify(runtime,never()).expireReconnect(any(),anyLong());
+        verify(runtime,never()).expireReconnectWithView(any(),anyLong());
     }
 
     @Test void graceExpiryMarksCurrentGenerationAndLateConnectDoesNotRestore() {
         GameRuntimeView disconnected=view(false,9);
         when(runtime.disconnect(1)).thenReturn(Optional.of(new GameRuntimeService.GameConnectionTransition(disconnected,1)));
-        when(runtime.expireReconnect(game,1)).thenReturn(true);
+        when(runtime.expireReconnectWithView(game,1)).thenReturn(Optional.of(disconnected));
         service.onLastDisconnect(1);grace.task.run();service.onFirstConnection(1);
-        verify(runtime).expireReconnect(game,1);verify(runtime,never()).reconnect(1);
+        verify(runtime).expireReconnectWithView(game,1);verify(runtime,never()).reconnect(1);
     }
 
     @Test void earlierGraceExpiryDoesNotCancelCurrentTurnDeadline() {
@@ -75,7 +75,7 @@ class ReconnectLifecycleApplicationTests {
         when(runtime.privateView(game,1)).thenReturn(new GamePlayerPrivateView(1,5,game,turn,8,List.of(),LegalActions.none(),900));
         when(runtime.privateView(game,2)).thenReturn(new GamePlayerPrivateView(2,5,game,turn,8,List.of(),LegalActions.none(),900));
         when(runtime.disconnect(1)).thenReturn(Optional.of(new GameRuntimeService.GameConnectionTransition(disconnected,1)));
-        when(runtime.expireReconnect(game,1)).thenReturn(true);
+        when(runtime.expireReconnectWithView(game,1)).thenReturn(Optional.of(disconnected));
         when(runtime.handleTurnTimeout(game,5,turn)).thenReturn(Optional.of(new GameActionOutcome(connected,after,1,1,
                 com.ptit.poker.game.domain.betting.PokerActionType.FOLD,0,0,900,null,null,true)));
 

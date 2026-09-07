@@ -10,4 +10,5 @@ public interface PokerHandRepository extends JpaRepository<PokerHandEntity, Long
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select hand from PokerHandEntity hand where hand.id = :id")
     Optional<PokerHandEntity> findByIdForUpdate(Long id);
+    Optional<PokerHandEntity> findFirstByGameSessionIdAndEndReasonIsNotNullOrderByHandNumberDesc(Long gameSessionId);
 }

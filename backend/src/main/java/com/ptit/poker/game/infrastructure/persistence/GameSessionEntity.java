@@ -2,10 +2,15 @@ package com.ptit.poker.game.infrastructure.persistence;
 
 import jakarta.persistence.*;
 import java.time.Instant;
+import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
-@Entity @Table(name = "game_sessions")
+@Entity @Table(name = "game_sessions", uniqueConstraints = @UniqueConstraint(
+        name = "uk_game_sessions_game_id", columnNames = "game_id"))
 public class GameSessionEntity {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;
+    @JdbcTypeCode(SqlTypes.CHAR) @Column(name = "game_id", length = 36) private String gameId;
     @Column(name = "room_id", nullable = false) private Long roomId;
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 20) private GameSessionStatus status;
     @Column(name = "started_at", nullable = false) private Instant startedAt;
@@ -13,9 +18,14 @@ public class GameSessionEntity {
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false) private Instant createdAt;
     protected GameSessionEntity() {}
     public GameSessionEntity(Long roomId, GameSessionStatus status, Instant startedAt, Instant endedAt) {
+        this(roomId, null, status, startedAt, endedAt);
+    }
+    public GameSessionEntity(Long roomId, UUID gameId, GameSessionStatus status, Instant startedAt, Instant endedAt) {
         this.roomId = roomId; this.status = status; this.startedAt = startedAt; this.endedAt = endedAt;
+        this.gameId = gameId == null ? null : gameId.toString();
     }
     public Long getId() { return id; }
+    public String getGameId() { return gameId; }
     public Long getRoomId() { return roomId; }
     public GameSessionStatus getStatus() { return status; }
     public Instant getStartedAt() { return startedAt; }

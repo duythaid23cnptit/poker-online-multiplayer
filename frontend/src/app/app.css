@@ -1,0 +1,128 @@
+.app-header {
+  position: sticky;
+  z-index: var(--layer-header);
+  top: 0;
+  border-bottom: 1px solid rgb(var(--rgb-border) / 0.82);
+  background: rgb(var(--rgb-canvas) / 0.9);
+  box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 0.15), inset 0 -1px rgb(255 255 255 / 0.015);
+  backdrop-filter: blur(18px);
+}
+
+.app-nav {
+  order: 3;
+  display: flex;
+  width: 100%;
+  gap: 0.15rem;
+  overflow-x: auto;
+  border-top: 1px solid rgb(var(--rgb-border) / 0.7);
+  padding-top: var(--space-2);
+}
+
+.app-nav-link {
+  position: relative;
+  flex: none;
+  border-radius: var(--radius-small);
+  padding: 0.55rem 0.78rem;
+  color: var(--color-secondary);
+  font-size: var(--text-body);
+  font-weight: 750;
+  transition: var(--duration-normal) ease;
+}
+
+.app-nav-link:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.app-nav-link:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.app-nav-link-active {
+  color: var(--color-accent);
+  background: linear-gradient(180deg, rgb(var(--rgb-accent) / 0.11), rgb(var(--rgb-accent) / 0.065));
+  box-shadow: inset 0 0 0 1px rgb(var(--rgb-accent) / 0.06);
+}
+
+.app-nav-link-active::after {
+  position: absolute;
+  right: 0.7rem;
+  bottom: 0.12rem;
+  left: 0.7rem;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-accent);
+  content: '';
+}
+
+.app-footer {
+  display: flex;
+  max-width: var(--content-width);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  margin-inline: auto;
+  border-top: 1px solid rgb(var(--rgb-border) / 0.7);
+  padding: var(--space-8) var(--space-4);
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+
+.app-footer>div {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+@media (min-width: 640px) {
+  .app-nav {
+    order: initial;
+    width: auto;
+    margin-left: auto;
+    border: 0;
+    padding-top: 0;
+  }
+
+  .app-footer {
+    padding-inline: var(--space-6);
+  }
+
+}
+
+@media (min-width: 1024px) {
+  .app-footer {
+    padding-inline: var(--space-8);
+  }
+
+}
+
+@media (max-width: 639px) {
+  .app-header>div {
+    align-items: center;
+  }
+
+  .app-nav {
+    scrollbar-width: none;
+  }
+
+  .app-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .app-nav-link {
+    padding-inline: 0.68rem;
+  }
+
+  .app-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .app-footer>div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+}

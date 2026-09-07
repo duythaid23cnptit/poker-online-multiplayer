@@ -11,6 +11,9 @@ export interface BackendErrorBody {
 }
 
 const codeMessages: Record<string, string> = {
+  INSUFFICIENT_CHIPS: "You don't have enough chips to join this table.",
+  SEAT_OCCUPIED: 'Seat is no longer available. Choose another seat.',
+  SEAT_OR_MEMBERSHIP_CONFLICT: 'Seat is no longer available. Choose another seat.',
   ACCOUNT_LOCKED: 'This account is currently locked. Contact an administrator for help.',
   AUTHENTICATION_FAILED: 'The username or password is incorrect.',
   DUPLICATE_ACCOUNT: 'An account already uses that username or email address.',

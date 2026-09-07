@@ -5,10 +5,10 @@ export function AuthLayout() {
   return (
     <main className="auth-backdrop min-h-screen px-4 py-5 sm:px-6 sm:py-7 lg:px-10 lg:py-8">
       <div className="auth-layout mx-auto grid min-h-[calc(100vh-2.5rem)] max-w-[1500px] items-center gap-8 md:min-h-[calc(100vh-3.5rem)] lg:min-h-[calc(100vh-4rem)] lg:grid-cols-[minmax(0,1fr)_minmax(26rem,31rem)] lg:gap-12">
-      <section className="auth-brand-panel relative hidden min-h-[36rem] overflow-hidden px-1 py-2 md:flex md:flex-col md:justify-between lg:min-h-[44rem] lg:px-4" aria-label="Poker Online introduction">
+      <section className="auth-brand-panel relative hidden min-h-[36rem] overflow-hidden px-1 py-2 lg:flex lg:flex-col lg:justify-between lg:min-h-[44rem] lg:px-4" aria-label="Poker Online introduction">
         <AppLogo />
         <div className="auth-brand-copy relative z-10 max-w-xl pb-8 pt-16 lg:pb-12 lg:pt-20">
-          <p className="mb-5 text-xs font-bold uppercase tracking-[0.24em] text-accent">Server-authoritative multiplayer</p>
+          <p className="mb-5 text-xs font-bold uppercase tracking-[0.24em] text-accent">Texas Hold’em · Live multiplayer</p>
           <h1 className="auth-brand-title text-balance text-5xl font-black uppercase leading-[0.98] tracking-[-0.035em] text-text lg:text-6xl">
             Real players.<br />Real time.<br /><span>Real poker.</span>
           </h1>
@@ -41,7 +41,7 @@ export function AuthLayout() {
       </section>
       <section className="mx-auto flex w-full max-w-[31rem] items-center justify-center">
         <div className="w-full">
-          <div className="mb-7 flex justify-center md:hidden"><AppLogo /></div>
+          <div className="mb-7 flex justify-center lg:hidden"><AppLogo /></div>
           <Outlet />
         </div>
       </section>

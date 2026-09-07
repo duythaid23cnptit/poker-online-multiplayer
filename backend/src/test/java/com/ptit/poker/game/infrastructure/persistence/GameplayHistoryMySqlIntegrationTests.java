@@ -84,7 +84,7 @@ class GameplayHistoryMySqlIntegrationTests {
                 unique("room"), owner.getId(), RoomType.PUBLIC, null, 6,
                 10, 20, 1_000, RoomStatus.WAITING, Instant.now()));
 
-        var started = sessionHistory.startSession(room.getId());
+        var started = sessionHistory.startSession(room.getId(), UUID.randomUUID());
         var finished = sessionHistory.finishSession(started.id());
 
         assertThat(started.status()).isEqualTo(GameSessionStatus.ACTIVE);
@@ -127,7 +127,7 @@ class GameplayHistoryMySqlIntegrationTests {
         RoomEntity room = rooms.saveAndFlush(new RoomEntity(
                 unique("room"), firstUser.getId(), RoomType.PUBLIC, null, 6,
                 10, 20, 1_000, RoomStatus.WAITING, Instant.now()));
-        long sessionId = sessionHistory.startSession(room.getId()).id();
+        long sessionId = sessionHistory.startSession(room.getId(), UUID.randomUUID()).id();
         HandHistoryHandle handle = handHistory.startHand(sessionId, 1, 10, 20,
                 threePlayerPreFlopState(firstUser.getId(), secondUser.getId(), thirdUser.getId()));
 
@@ -183,7 +183,7 @@ class GameplayHistoryMySqlIntegrationTests {
         RoomEntity room = rooms.saveAndFlush(new RoomEntity(
                 unique("room"), firstUser.getId(), RoomType.PUBLIC, null, 6,
                 10, 20, 1_000, RoomStatus.WAITING, Instant.now()));
-        long sessionId = sessionHistory.startSession(room.getId()).id();
+        long sessionId = sessionHistory.startSession(room.getId(), UUID.randomUUID()).id();
         HandHistoryHandle valid = handHistory.startHand(sessionId, 1, 10, 20,
                 twoPlayerPreFlopState(firstUser.getId(), secondUser.getId()));
         HandHistoryHandle incomplete = new HandHistoryHandle(valid.pokerHandId(),
@@ -208,7 +208,7 @@ class GameplayHistoryMySqlIntegrationTests {
     void flywayV9PreservesAndHibernateValidatesAllGameplayHistoryTables() {
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM flyway_schema_history WHERE version='9' AND success=TRUE", Long.class)).isOne();
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("11");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("12");
         Set<String> actual = Set.copyOf(jdbc.queryForList(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()", String.class));
         assertThat(actual).containsAll(TABLES);

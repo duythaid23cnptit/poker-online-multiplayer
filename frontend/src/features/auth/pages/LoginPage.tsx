@@ -56,14 +56,14 @@ export function LoginPage() {
         </div>
       )}
       <form className="mt-8 space-y-5" onSubmit={submit} noValidate>
-        <FormField id="username" label="Username" error={errors.username?.message}>
+        <FormField reserveErrorSpace id="username" label="Username" error={errors.username?.message}>
           <Input
             id="username" autoComplete="username" placeholder="Your username"
             invalid={Boolean(errors.username)} aria-describedby={errors.username ? 'username-error' : undefined}
             disabled={login.isPending} {...register('username')}
           />
         </FormField>
-        <FormField id="password" label="Password" error={errors.password?.message}>
+        <FormField reserveErrorSpace id="password" label="Password" error={errors.password?.message}>
           <PasswordInput
             id="password" autoComplete="current-password" placeholder="Your password"
             invalid={Boolean(errors.password)} aria-describedby={errors.password ? 'password-error' : undefined}
