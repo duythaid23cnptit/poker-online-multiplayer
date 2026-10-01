@@ -15,6 +15,7 @@ public interface RoomGamePort {
     void finalizeActiveGameDeparture(long roomId, long userId);
     void markLeaving(long roomId, long userId);
     void finishRoom(long roomId);
+    OrphanedRoomFinalization finalizeOrphanedGame(long roomId);
 
     record RoomGameSnapshot(long roomId, long ownerUserId, RoomStatus status, long smallBlind, long bigBlind,
                             List<RoomSeat> seats) {
@@ -25,4 +26,5 @@ public interface RoomGamePort {
     }
     record RoomSeat(long userId, int seatNumber, long tableChips, RoomPlayerState state) {}
     record PlayerStack(long userId, long tableChips) {}
+    record OrphanedRoomFinalization(int membershipsFinalized, long chipsRefunded, boolean roomFinished) {}
 }

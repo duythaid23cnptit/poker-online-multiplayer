@@ -2,6 +2,9 @@ package com.ptit.poker.room.infrastructure.persistence;
 
 import com.ptit.poker.player.application.RoomPlayerAccountPort;
 import com.ptit.poker.room.domain.RoomPlayerState;
+import com.ptit.poker.room.domain.RoomStatus;
+import com.ptit.poker.room.domain.RoomType;
+import java.util.List;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -57,5 +60,30 @@ class RoomGameAdapterTests {
         assertThat(member.getTableChips()).isZero();
         assertThat(member.getPlayerState()).isEqualTo(RoomPlayerState.SPECTATING);
         verify(accounts).credit(99L, 0);
+    }
+
+    @Test
+    void orphanedGameFinalizationCashOutsEveryActiveMembershipAndFinishesPlayingRoomOnce() {
+        RoomEntity room = new RoomEntity("orphan", 42L, RoomType.PUBLIC, null,
+                6, 50, 100, 500, RoomStatus.PLAYING, FINISHED_AT.minusSeconds(60));
+        RoomPlayerEntity first = new RoomPlayerEntity(7L, 42L, 1, RoomPlayerState.PLAYING, 600);
+        RoomPlayerEntity second = new RoomPlayerEntity(7L, 99L, 2, RoomPlayerState.DISCONNECTED, 400);
+        when(rooms.findByIdForUpdate(7L)).thenReturn(Optional.of(room));
+        when(players.findAllActiveByRoomIdForUpdate(7L)).thenReturn(List.of(first, second));
+
+        var initial = adapter.finalizeOrphanedGame(7L);
+        var repeated = adapter.finalizeOrphanedGame(7L);
+
+        assertThat(initial.membershipsFinalized()).isEqualTo(2);
+        assertThat(initial.chipsRefunded()).isEqualTo(1_000);
+        assertThat(initial.roomFinished()).isTrue();
+        assertThat(repeated.membershipsFinalized()).isZero();
+        assertThat(repeated.chipsRefunded()).isZero();
+        assertThat(repeated.roomFinished()).isFalse();
+        assertThat(room.getStatus()).isEqualTo(RoomStatus.FINISHED);
+        assertThat(first.isActive()).isFalse();
+        assertThat(second.isActive()).isFalse();
+        verify(accounts).credit(42L, 600);
+        verify(accounts).credit(99L, 400);
     }
 }

@@ -6,12 +6,12 @@ The server is authoritative for cards, chips, pots, legal actions, turns, timers
 
 ## Release status
 
-The current repository state is the **v1.0.0-rc1** release candidate. The complete multiplayer flow is implemented from account registration and room creation through live play, reconnect recovery, session completion, and persisted results.
+The **v1.0.0-rc1** tag is the frozen safety checkpoint. The working tree contains the contract-alignment candidate being validated for v1.0.0-rc2. The complete multiplayer flow is implemented from account registration and room creation through live play, reconnect recovery, session completion, persisted results, player analytics, and administration.
 
 | Quality gate | Verified result |
 |---|---:|
 | Backend tests with real `TEST_DB_*` configuration | 633 passed, 0 failures, 0 errors, 0 skipped |
-| Frontend tests | 175 passed |
+| Frontend tests | 208 passed across 46 files |
 | Backend package | Passed |
 | Frontend production build | Passed |
 | Frontend lint | Passed |
@@ -28,11 +28,13 @@ The release label describes the current product state. The source manifests reta
 - Server-authoritative Texas Hold'em with blinds, dealing, betting, raises, calls, checks, folds, all-ins, automatic timeout actions, community cards, showdown, contribution-aware pots, side pots, uncalled-bet returns, ties, and odd-chip settlement.
 - Private hole-card delivery, legal-action prompts, turn timers, completed-hand result dwell, automatic next hands, bust-out detection, and terminal Game Session completion.
 - Active-game discovery, cold snapshot hydration, browser-refresh recovery, disconnect grace, reconnect, and historical final-hand snapshots.
+- Startup reconciliation for process-crashed sessions: unrecoverable `ACTIVE` sessions become `ABORTED`, active memberships cash out exactly once, and stranded rooms leave `PLAYING` without misreporting a completed poker result.
 - Authoritative Leave Game handling with deferred departure during an active hand and exactly-once Table Chip return.
 - Persistent room chat with recent-history hydration, authenticated sender identity, idempotent client message IDs, and live delivery.
 - Friend requests, friend lists, connection-derived presence, and private notifications.
-- Player-facing lobby, room, poker-table, friends, rankings, rating history, and profile screens.
-- Backend statistics, time-bucket analytics, ranking, moderation, audit-log, and administrative query APIs.
+- Player-facing lobby, room, poker-table, friends, rankings, rating history, performance analytics, and profile screens.
+- Admin-only monitoring and moderation screens backed by the overview, user, room, game, hand, termination, and audit-log APIs.
+- Strict role separation: `PLAYER` accounts use the poker application, while `ADMIN` accounts use a dedicated administration workspace and cannot participate in rooms, games, chat, or player social flows.
 
 ## Architecture
 
@@ -134,14 +136,17 @@ Representative REST endpoints under `/api/v1` include:
 | Area | Endpoints |
 |---|---|
 | Authentication | `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout` |
-| Current player | `GET/PATCH /me` |
+| Shared identity | `GET /me` for `PLAYER` and `ADMIN` |
+| Player profile | `PATCH /me` for `PLAYER` |
 | Rooms | `GET/POST /rooms`, `GET /rooms/{roomId}`, `POST /rooms/{roomId}/join`, `/leave` |
 | Games | `POST /games/rooms/{roomId}/start`, `POST /games/{gameId}/leave` |
 | Recovery | `GET /games/{gameId}/snapshot`, `/games/active/room/{roomId}`, `/games/active/me` |
 | Chat history | `GET /rooms/{roomId}/chat/messages?limit=50` |
 | Social and rankings | `/friend-requests`, `/friends`, `/rankings/me`, `/rankings/leaderboard`, `/rankings/me/history` |
+| Performance | `/players/me/statistics`, `/analytics/me/summary`, `/analytics/me/daily`, `/analytics/me/weekly` |
+| Administration | `/admin/overview`, `/admin/users`, `/admin/rooms`, `/admin/games`, `/admin/audit-log`, and detail/moderation routes |
 
-The native STOMP endpoint is `/ws`; SockJS is not used. The access token is sent in the STOMP `CONNECT` `Authorization` header, never in the URL. Subscription and command authorization is enforced independently on the server.
+The native STOMP endpoint is `/ws`; SockJS is not used. The access token is sent in the STOMP `CONNECT` `Authorization` header, never in the URL. Every subscription and command requires an active `PLAYER`; admin sessions do not start the player realtime bootstrap.
 
 | Direction | Destination | Purpose |
 |---|---|---|

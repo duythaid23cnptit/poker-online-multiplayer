@@ -23,7 +23,7 @@ const accessResponse = {
   accessToken: 'restored-access-token',
   tokenType: 'Bearer',
   expiresInSeconds: 900,
-}
+} as const
 
 describe('sessionCoordinator', () => {
   beforeEach(() => {

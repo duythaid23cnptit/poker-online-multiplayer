@@ -13,12 +13,12 @@ export interface LoginRequest {
 export interface AuthResponse {
   accessToken: string
   refreshToken: string
-  tokenType: 'Bearer' | string
+  tokenType: 'Bearer'
   expiresInSeconds: number
 }
 
 export interface AccessTokenResponse {
   accessToken: string
-  tokenType: 'Bearer' | string
+  tokenType: 'Bearer'
   expiresInSeconds: number
 }

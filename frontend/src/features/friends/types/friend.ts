@@ -13,5 +13,5 @@ export interface FriendshipView {
   createdAt: string
   respondedAt: string | null
   otherPlayer: SafePlayerSummary
-  presenceStatus?: PresenceStatus | null
+  presenceStatus?: PresenceStatus
 }

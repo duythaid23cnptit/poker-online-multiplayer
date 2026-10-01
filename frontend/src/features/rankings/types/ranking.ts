@@ -1,6 +1,8 @@
 export interface CurrentRanking {
   rank: number | null
   userId: number
+  username: string | null
+  displayName: string | null
   rating: number
   gamesRated: number
   peakRating: number

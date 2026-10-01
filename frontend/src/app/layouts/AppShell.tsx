@@ -15,7 +15,7 @@ const navClass = ({ isActive }: { isActive: boolean }) =>
 
 const navItems = [
   ['Lobby', routes.app, true], ['Rooms', routes.rooms, false], ['Friends', routes.friends, false],
-  ['Rankings', routes.rankings, false], ['Profile', routes.profile, false],
+  ['Rankings', routes.rankings, false], ['Performance', routes.statistics, false], ['Profile', routes.profile, false],
 ] as const
 
 export function AppShell() {

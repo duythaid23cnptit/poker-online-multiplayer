@@ -4,6 +4,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -39,7 +40,18 @@ public class SecurityConfiguration {
                         .requestMatchers("/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/refresh")
                         .permitAll()
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
-                        .requestMatchers("/api/v1/auth/logout", "/api/v1/me", "/api/v1/players/me/statistics", "/api/v1/rankings/**", "/api/v1/analytics/**", "/api/v1/rooms/**", "/api/v1/games/**", "/api/v1/friends/**", "/api/v1/friend-requests/**").authenticated()
+                        .requestMatchers("/api/v1/auth/logout").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/me").authenticated()
+                        .requestMatchers(
+                                "/api/v1/me",
+                                "/api/v1/players/me/statistics",
+                                "/api/v1/rankings/**",
+                                "/api/v1/analytics/**",
+                                "/api/v1/rooms/**",
+                                "/api/v1/games/**",
+                                "/api/v1/friends/**",
+                                "/api/v1/friend-requests/**")
+                        .hasRole("PLAYER")
                         .anyRequest().denyAll())
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();

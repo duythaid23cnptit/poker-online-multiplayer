@@ -73,9 +73,7 @@ public class RoomGameAdapter implements RoomGamePort {
     @Override @Transactional
     public void finalizeActiveGameDeparture(long roomId,long userId) {
         RoomPlayerEntity member=require(roomId,userId);
-        if (!member.isActive()) return;
-        long cashOut=member.leave(clock.instant());
-        accounts.credit(userId,cashOut);
+        if (cashOut(member) == null) return;
         events.publishEvent(new RoomChangedEvent(roomId,RoomEventType.PLAYER_LEFT,
                 Map.of("userId",userId),RoomEventType.PLAYER_COUNT_CHANGED,Map.of("roomId",roomId)));
     }
@@ -85,6 +83,28 @@ public class RoomGameAdapter implements RoomGamePort {
     public void finishRoom(long roomId) {
         rooms.findByIdForUpdate(roomId).orElseThrow(() -> new IllegalArgumentException("room not found"))
                 .finish(clock.instant());
+    }
+    @Override @Transactional
+    public OrphanedRoomFinalization finalizeOrphanedGame(long roomId) {
+        RoomEntity room = rooms.findByIdForUpdate(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("room not found"));
+        int finalized = 0;
+        long refunded = 0;
+        for (RoomPlayerEntity member : players.findAllActiveByRoomIdForUpdate(roomId)) {
+            Long cashOut = cashOut(member);
+            if (cashOut == null) continue;
+            finalized++;
+            refunded = Math.addExact(refunded, cashOut);
+        }
+        boolean roomFinished = room.getStatus() == com.ptit.poker.room.domain.RoomStatus.PLAYING;
+        if (roomFinished) room.finish(clock.instant());
+        return new OrphanedRoomFinalization(finalized, refunded, roomFinished);
+    }
+    private Long cashOut(RoomPlayerEntity member) {
+        if (!member.isActive()) return null;
+        long amount = member.leave(clock.instant());
+        accounts.credit(member.getUserId(), amount);
+        return amount;
     }
     private RoomPlayerEntity require(long roomId, long userId) {
         return players.findByRoomIdAndUserIdForUpdate(roomId, userId)

@@ -112,6 +112,41 @@ class WebSocketAuthenticationInterceptorTests {
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("Authentication required");
     }
 
+    @Test
+    void administratorCannotSubscribeToPlayerRealtimeDestinations() {
+        AuthenticatedUser principal = new AuthenticatedUser(8L, "admin", Role.ADMIN);
+        activeUser(8L);
+        var authentication = new UsernamePasswordAuthenticationToken(principal, null,
+                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN")));
+        StompHeaderAccessor subscribe = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        subscribe.setUser(authentication);
+        subscribe.setDestination("/topic/lobby");
+        subscribe.setLeaveMutable(true);
+
+        assertThatThrownBy(() -> interceptor.preSend(message(subscribe), mock(org.springframework.messaging.MessageChannel.class)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Player role required");
+    }
+
+    @Test
+    void administratorCannotSendReadyChatOrGameCommands() {
+        AuthenticatedUser principal = new AuthenticatedUser(8L, "admin", Role.ADMIN);
+        activeUser(8L);
+        var authentication = new UsernamePasswordAuthenticationToken(principal, null,
+                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN")));
+
+        for (String destination : List.of(
+                "/app/room/12/ready",
+                "/app/room/12/chat",
+                "/app/game/" + UUID.randomUUID() + "/action")) {
+            StompHeaderAccessor send = StompHeaderAccessor.create(StompCommand.SEND);
+            send.setUser(authentication);
+            send.setDestination(destination);
+            send.setLeaveMutable(true);
+            assertThatThrownBy(() -> interceptor.preSend(message(send), mock(org.springframework.messaging.MessageChannel.class)))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessage("Player role required");
+        }
+    }
+
     private void activeUser(long id) {
         UserEntity user = mock(UserEntity.class);
         when(user.getAccountStatus()).thenReturn(AccountStatus.ACTIVE);

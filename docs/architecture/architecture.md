@@ -2,7 +2,7 @@
 
 ## Status and goals
 
-This document is the Phase 0 architecture proposal. It describes boundaries and contracts; it does not prescribe implementation details that should be proven during later phases.
+This document describes the implemented modular-monolith architecture and its current runtime boundaries.
 
 The system supports multiple concurrent players and spectators in a lobby and poker rooms. It demonstrates REST, authenticated WebSocket/STOMP, broadcast and private unicast, session/connection management, reconnect, synchronized timers, and server-authoritative game processing.
 
@@ -40,23 +40,23 @@ The game module has two distinct parts: a pure-Java Poker Engine for determinist
 
 ## Frontend architecture
 
-The Vite React application is also organized by feature, with an application shell and shared technical utilities. A proposed shape is:
+The Vite React application is organized by feature, with an application shell and shared technical utilities:
 
 ```text
 frontend/src/
   app/                 routing, providers, bootstrap
-  features/            auth, player, social, lobby, room, game, ranking, analytics, admin
+  features/            admin, auth, friends, game, lobby, notifications, profile, rankings, rooms, statistics
   shared/              API client, STOMP client, UI primitives, validation, types
   test/                shared test setup
 ```
 
-TanStack Query owns REST server-state caching. Zustand owns limited client/session UI state and the current realtime projection. React Hook Form and Zod manage forms and boundary validation. The client renders authoritative snapshots/events and may offer predictive UI feedback, but never finalizes a poker action locally.
+TanStack Query owns REST server-state caching. Zustand owns limited client state for session metadata, notifications, and active-game discovery. The live game projection is reconciled from snapshots and events in the game feature. React Hook Form and Zod manage forms and boundary validation. The client renders authoritative snapshots/events and may offer predictive UI feedback, but never finalizes a poker action locally.
 
 ## HTTP and WebSocket responsibilities
 
 REST is used for request/response operations, durable resource views, initial bootstrapping, pagination, and recovery snapshots. Examples include authentication, profiles, friends, room creation/join, history, rankings, analytics, admin operations, and fetching the latest room/game snapshot.
 
-WebSocket/STOMP is used when ordering and low-latency delivery matter: presence changes, lobby/room updates, chat, game commands/events, private cards, turn deadlines, and notifications. A WebSocket command is an intention and receives an authoritative event or private rejection. It is not a second ungoverned API: it uses the same application services and authorization policies as REST.
+WebSocket/STOMP is used when ordering and low-latency delivery matter: presence changes, lobby/room updates, chat, game commands/events, private cards, turn deadlines, and notifications. A WebSocket command is an intention. Game actions receive authoritative public acknowledgement or a private rejection; room readiness and chat reconcile through authoritative room/chat events and REST recovery. STOMP uses the same application services and authorization policies as REST.
 
 REST and STOMP payloads use explicit DTOs. IDs, timestamps, enum values, versions, and error formats must be consistent across both transports.
 
@@ -72,7 +72,7 @@ Randomness must be generated server-side with an appropriate secure source. Test
 - Account Chips are a persistent account balance. A server-authoritative buy-in transfers chips into the player's Table Chip balance; a legal departure returns the remaining Table Chips to Account Chips. Both sides of each transfer must be atomic and auditable.
 - A Game Session is continuous play in one room and contains multiple Poker Hands. A Poker Hand is one deal from blind posting through completion; history and statistics never conflate these entities.
 - The active game aggregate is held in process for fast serialized mutation, with durable hand/action checkpoints sufficient for audit and defined recovery.
-- A single database transaction records each accepted durable transition and its outgoing-event intent. The exact outbox/recovery implementation is a Phase 1 design decision; it must prevent a committed action from silently losing its corresponding client update.
+- Accepted durable transitions persist inside application transaction boundaries. Room, chat, statistics, ranking, and analytics listeners run after commit where configured; broker delivery remains best effort. REST snapshots and persisted history recover clients after missed frames. There is no transactional outbox in the current single-server implementation.
 - Derived statistics and rankings update after authoritative hand/session outcomes, preferably through internal events so the game module does not depend on those modules.
 
 ## Major runtime flows
@@ -93,7 +93,7 @@ Randomness must be generated server-side with an appropriate secure source. Test
 
 ### Play an action
 
-1. Client sends a game command containing `clientActionId`, `turnId`, expected `stateVersion`, action type, and optional amount.
+1. Client sends a game command containing `clientActionId`, `turnId`, action type, and optional target amount.
 2. The authenticated command enters that game's serialization boundary.
 3. Server rejects duplicates/stale/illegal commands or runs the pure engine transition.
 4. Accepted state/history is committed, the version advances, a sanitized public event is broadcast, and any private data is unicasted.
@@ -119,15 +119,15 @@ Randomness must be generated server-side with an appropriate secure source. Test
 ## Architectural risks
 
 - Poker correctness: side pots, split pots, all-in reopening rules, heads-up blinds, and ties require precise rule decisions and exhaustive tests.
-- In-memory active state: process failure or multi-instance deployment needs a documented recovery/ownership model. Initial deployment should be single-instance unless game affinity/coordination is designed.
+- In-memory active state: seamless active-hand restoration and multi-instance runtime ownership are not implemented. On a new process, a pre-server-start reconciliation transaction treats inherited `ACTIVE` sessions as orphaned, refunds persisted Table Chips, finalizes memberships, records `ABORTED`, and changes associated `PLAYING` rooms to `FINISHED`. Initial deployment should remain single-instance unless game affinity and hand restoration are designed.
 - Database/event consistency: a committed action and failed broadcast can diverge clients; snapshots and an eventual transactional event strategy are required.
 - WebSocket authorization/data leakage: destination-level checks and separate private DTOs are mandatory.
 - Concurrency/idempotency: REST retries, duplicate STOMP frames, timer races, and reconnect can otherwise double-apply actions.
-- Room/game lifecycle edge cases still needing decisions include rebuy limits, spectator permissions, abandoned-game cleanup, and deterministic selection among multiple eligible successor owners.
+- The current product has fixed buy-in and no rebuy command. Spectator visibility and deterministic waiting-room ownership transfer are implemented. Process crashes end the current session abnormally during the next startup; they do not restore the interrupted hand.
 - Statistics drift: define authoritative source events and make projections replayable/reconcilable.
 - Scope: the feature set is large for a university project; deliver vertical slices and prioritize networking and correct core play.
 
-## Proposed repository structure
+## Repository structure
 
 ```text
 /
@@ -138,8 +138,8 @@ Randomness must be generated server-side with an appropriate secure source. Test
     api/
     database/
     testing/
-  backend/             # introduced in a later phase
-  frontend/            # introduced in a later phase
+  backend/             # Spring Boot modular monolith
+  frontend/            # React/Vite client
 ```
 ## Player-statistics projection
 
@@ -149,7 +149,7 @@ The analytics module reads completed game history through a narrow read port and
 After a game session commits, ranking independently reads participant session-net results. With initial rating 1000 and K=32, every player is compared pairwise against every opponent, expected scores use the standard 400-point logistic formula, actual scores are 1/0.5/0, and averages produce one simultaneously calculated rounded delta. Competition placement uses session net; the rating floor is zero. Participant rows are locked in user-ID order and history makes a session idempotent.
 # Daily and weekly analytics projection
 
-Phase 8C consumes `GameSessionFinishedEvent` independently after commit. It
+The time-bucket projection consumes `GameSessionFinishedEvent` independently after commit. It
 discovers affected player/day and player/week keys, orders them by user, bucket
 type, and date, and recomputes each complete projection from authoritative
 gameplay history. A concrete projection row is initialized and point-locked
@@ -162,13 +162,13 @@ The business timezone is `Asia/Bangkok`. Hands belong to the local date of
 as `handsTied`. Playing time sums, per represented session, the interval from
 its earliest hand start to latest hand finish within the bucket, avoiding gaps
 between unrelated sessions.
-# Phase 9A admin read model
+# Admin read model
 
-The admin feature is a read-only query module. Controllers call an application
+The admin read side is a query module. Controllers call an application
 service, which normalizes and validates filters before using a narrow read port.
 The JDBC adapter composes cross-module reports directly into explicit admin
-DTOs. Persisted state remains authoritative; Phase 9A does not depend on active
-game runtime internals and performs no moderation or balance mutation.
+DTOs. Persisted query state remains authoritative and does not depend on active
+game runtime internals. Moderation is handled by separate narrow command ports.
 
 Overview counts all users, ACTIVE accounts, all rooms, WAITING/PLAYING open
 rooms, ACTIVE/FINISHED sessions, completed hands, and account-chip balances.

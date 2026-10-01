@@ -1,6 +1,7 @@
 package com.ptit.poker.room.infrastructure.realtime;
 
 import com.ptit.poker.auth.domain.AccountStatus;
+import com.ptit.poker.auth.domain.Role;
 import com.ptit.poker.auth.infrastructure.persistence.UserEntity;
 import com.ptit.poker.auth.infrastructure.persistence.UserRepository;
 import com.ptit.poker.auth.infrastructure.security.AuthenticatedUser;
@@ -43,10 +44,17 @@ public class WebSocketAuthenticationInterceptor implements ChannelInterceptor {
         if (accessor.getCommand() == StompCommand.CONNECT) authenticate(accessor);
         if (accessor.getCommand() == StompCommand.SUBSCRIBE || accessor.getCommand() == StompCommand.SEND)
             requireCurrentlyActive(accessor);
+        if (accessor.getCommand() == StompCommand.SUBSCRIBE || accessor.getCommand() == StompCommand.SEND)
+            requirePlayer(accessor);
         if (accessor.getCommand() == StompCommand.SUBSCRIBE) authorizeSubscription(accessor);
-        if (accessor.getCommand() == StompCommand.SEND && accessor.getUser() == null)
-            throw new IllegalArgumentException("Authentication required");
         return message;
+    }
+
+    private void requirePlayer(StompHeaderAccessor accessor) {
+        if (!(accessor.getUser() instanceof org.springframework.security.core.Authentication authentication)
+                || !(authentication.getPrincipal() instanceof AuthenticatedUser principal)
+                || principal.role() != Role.PLAYER)
+            throw new IllegalArgumentException("Player role required");
     }
 
     private void requireCurrentlyActive(StompHeaderAccessor accessor) {

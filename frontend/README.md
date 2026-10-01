@@ -1,93 +1,105 @@
-# Poker Online Frontend
+# Poker Online frontend
 
-This React application is the Phase 11A foundation for Poker Online Multiplayer. It implements the authentication and application-shell foundation only: register, login, session restoration, logout, protected routing, a current-profile foundation, reusable UI primitives, and a low-level STOMP transport client.
+This React client implements the full player and administrator interface for the current release-candidate source. It renders server-authoritative state and communicates with the Spring Boot backend through typed REST clients and authenticated native WebSocket/STOMP.
 
-It deliberately does **not** implement Lobby, Room, Poker Table, gameplay actions, chat, friends, presence UI, ranking, history, statistics, analytics, or admin screens.
+Implemented screens include authentication, lobby, room creation/joining, waiting-room membership and host controls, live/historical poker tables, chat, friends and presence, rankings, player performance analytics, profile management, and an admin-only operations console.
 
-## Requirements
+## Requirements and commands
 
 - Node.js 22
 - npm 10
 
-Use npm consistently with the committed `package-lock.json`.
-
-## Commands
-
-Run these commands from this directory:
+Use npm with the committed lockfile:
 
 ```powershell
-npm install
+npm ci
 npm run dev
 npm test
 npm run build
 npm run lint
 ```
 
-`npm test` is a non-watch Vitest run. `npm run build` type-checks the application before creating the Vite production build.
+`npm test` is a non-watch Vitest run. `npm run build` runs the TypeScript project build before producing the Vite bundle.
 
-## Environment and local backend integration
+## Local backend integration
 
-Copy the safe example before changing local values:
+Copy the safe public configuration example:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-| Variable | Default example | Purpose |
+| Variable | Safe default | Purpose |
 |---|---|---|
-| `VITE_API_BASE_URL` | `/api/v1` | REST API base path |
+| `VITE_API_BASE_URL` | `/api/v1` | REST base path |
 | `VITE_WS_URL` | `/ws` | Native WebSocket/STOMP endpoint |
 
-These Vite values are public client configuration, not secrets. Never put database passwords, JWT signing keys, access tokens, refresh tokens, or private keys in `.env` files.
+Vite proxies `/api` and `/ws` to `http://localhost:8080` during development. These variables are public browser configuration. Never place database credentials, JWT signing keys, access tokens, refresh tokens, or private keys in frontend environment files.
 
-During local development, Vite proxies `/api` and `/ws` to the local Spring Boot server. Keeping the browser on the Vite origin avoids the backend's intentionally narrow browser-origin policy. For a deployed frontend, use a same-origin or reverse-proxy arrangement that the backend explicitly permits; do not work around STOMP authentication with a token query parameter.
+## Routes
 
-## Stack
+Public routes are `/login` and `/register`. A hydrated `PLAYER` session uses:
 
-- React and TypeScript, built with Vite
-- React Router for routing and route guards
-- TanStack Query for server state
-- Zustand for small client-owned session metadata
-- React Hook Form and Zod for form state and validation
-- Tailwind CSS for the UI foundation
-- `@stomp/stompjs` for the low-level authenticated STOMP client
-- Vitest and React Testing Library for frontend tests
+| Route | Screen |
+|---|---|
+| `/app` | Lobby |
+| `/app/rooms` | Room discovery, creation, join, spectator, seating, ready, and host start |
+| `/app/rooms/:roomId/games/:gameId` | Live or authorized historical table |
+| `/app/friends` | Friends, requests, presence, notifications |
+| `/app/rankings` | Current rating, leaderboard, rating history |
+| `/app/statistics` | Lifetime statistics and daily/weekly analytics |
+| `/app/profile` | Current account balance and editable profile |
+| `/app/performance` | Alias for player performance/statistics |
 
-No Axios, UI-framework, Redux, or animation-library replacement is used for this phase. The shared HTTP client is based on native `fetch`.
+An `ADMIN` session uses a separate administration shell at `/admin`, with `/admin/users`, `/admin/rooms`, `/admin/games`, and `/admin/audit`. It contains no player navigation or active-game recovery. Role guards redirect an admin away from `/app/*` and a player away from `/admin/*`; the backend independently enforces `ROLE_PLAYER` and `ROLE_ADMIN`.
 
-## Architecture and state ownership
-
-The source is organized by application, shared technical foundation, and feature:
+## Source organization
 
 ```text
 src/
-  app/          providers, router, layouts
-  shared/       typed API client, config, realtime transport, UI primitives
+  app/          providers, layouts, router
   features/
-    auth/       API, session, pages, forms, schemas
-    profile/    API, hooks, page, schema, types
+    admin/      admin REST/query layer, protected console, moderation UI
+    auth/       authentication, route guards, session coordination
+    friends/    friendship REST state and presence UI
+    game/       snapshot/event reconciliation, table, actions, chat
+    lobby/      dashboard composition
+    notifications/ private realtime notifications
+    profile/    current account/profile
+    rankings/   leaderboard and rating history
+    rooms/      lobby rooms and waiting-room lifecycle
+    statistics/ lifetime and time-bucket performance
+  shared/       HTTP/STOMP clients, configuration, UI primitives
+  styles/       tokens, global/component/utility styles and animation
+  test/         shared Vitest setup and fixtures
 ```
 
-TanStack Query owns server-derived data such as the current profile. Zustand does not duplicate API responses; it holds only client session metadata and the in-memory access credential needed to authorize requests.
+Feature CSS stays beside its feature and is composed through `src/styles/index.css`. The project does not use a monolithic `styles.css` or a separate UI framework.
 
-## Authentication and session model
+## State ownership and recovery
 
-The frozen backend returns an access token and opaque refresh token in the login JSON response. It does not use an HTTP-only refresh-token cookie.
+TanStack Query owns REST server state. Zustand holds only small client-owned session, notification, and active-game discovery state; it does not duplicate authoritative room or game snapshots.
 
-- The access token stays in memory only.
-- The refresh token is isolated in `sessionStorage`, never `localStorage`, query data, route state, or a persisted Zustand store.
-- On startup, the app enters a checking state, performs one refresh when a refresh token exists, then loads `GET /api/v1/me` before rendering protected content.
-- Protected request `401` responses share one refresh operation and retry the original request at most once. Failed refresh clears local session state and sensitive query data.
-- Logout calls the backend when possible, disconnects any active STOMP client, clears the token vault and query cache, then routes to Login even if the remote logout request fails.
+The game page subscribes before hydration, buffers frames, fetches the role-filtered snapshot, applies it, then consumes newer events. It repeats snapshot hydration after a STOMP reconnect. Direct navigation and F5 follow the same path. Room detail supplies the authoritative user-ID-to-username projection; `Player #id` is used only when identity is unavailable from the authorized current/historical contract.
 
-The refresh token must be JavaScript-readable because that is the frozen backend contract. `sessionStorage` is the least-persistent compatible option; it is not equivalent to an HTTP-only cookie and must never be logged or rendered.
+Room, friendship, and active-game queries are invalidated after reconnect. Waiting-room game discovery uses both `GAME_STARTED` and the active-game REST lookup, avoiding a navigation race when a frame is missed. Chat merges persisted history with realtime frames by message and client-command identity.
 
-## REST and STOMP contracts
+## Authentication and credentials
 
-REST authentication uses the existing `Authorization: Bearer <access-token>` contract. The frontend does not invent `/api/login`, `/api/auth/me`, or `/api/profile`; current profile access is `GET`/`PATCH /api/v1/me`.
+The implemented backend returns a short-lived access token and an opaque refresh token in the login JSON response.
 
-The STOMP endpoint is `/ws` without SockJS. When a future feature activates the transport, it supplies the access token in the native STOMP `CONNECT` header named `Authorization`. The Phase 11A transport foundation does not subscribe to lobby, room, game, chat, friendship, or presence destinations, and it disables STOMP frame debug logging to avoid token exposure.
+- The access token stays in memory.
+- The refresh token is isolated in `sessionStorage`; it is never placed in `localStorage`, query data, route state, logs, or a persisted Zustand store.
+- Session bootstrap refreshes once when a refresh token exists, then loads `GET /api/v1/me` before protected content renders.
+- Concurrent protected `401` responses share one refresh request and retry once.
+- Logout calls the backend when possible, disconnects STOMP, clears credentials and sensitive query data, and routes to Login even after a network failure.
 
-## Scope
+REST sends the access token in the `Authorization` header. STOMP sends it only in the native `CONNECT` header. It never appears in the WebSocket URL.
 
-The frontend renders server-authoritative data only. It does not reproduce poker rules, calculate chips, infer presence, or manufacture dashboard/business data. Future feature screens will be added in their own feature modules after their corresponding phases are approved.
+## Server authority and privacy
+
+The frontend sends intentions and renders authoritative responses. It does not shuffle/deal, calculate winners or pots, advance turns, determine timeout, mutate chips locally, infer usernames, or trust its disabled buttons as authorization.
+
+Seat occupancy and legal action controls are current UX guidance. The server still validates seats, membership, chips, roles, room state, turn ID, action, and amount atomically. Spectators subscribe to public game state but never receive hole cards or `YOUR_TURN`. Private-room passwords are submitted only for initial entry and are never cached for spectator-to-seat conversion.
+
+See the repository [REST contract](../docs/api/rest-api.md), [WebSocket/STOMP contract](../docs/api/websocket-protocol.md), and [traceability matrix](../docs/api/contract-traceability.md).

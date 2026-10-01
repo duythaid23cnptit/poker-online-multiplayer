@@ -15,14 +15,20 @@ import org.springframework.http.HttpStatus;import org.springframework.web.server
   for(var c:elo.calculate(input)){Rating old=ratings.get(c.userId());jdbc.update("UPDATE player_rankings SET rating=?,games_rated=?,peak_rating=?,updated_at=? WHERE user_id=?",c.newRating(),Math.addExact(old.games,1),Math.max(old.peak,c.newRating()),Timestamp.from(now),c.userId());
    jdbc.update("INSERT INTO ranking_history(user_id,game_session_id,old_rating,new_rating,rating_delta,session_net,placement,participant_count,created_at) VALUES(?,?,?,?,?,?,?,?,?)",c.userId(),sessionId,c.oldRating(),c.newRating(),c.ratingDelta(),c.sessionNet(),c.placement(),c.participantCount(),Timestamp.from(now));}}
  public CurrentRanking current(long userId){List<CurrentRanking> rows=jdbc.query("""
-  SELECT ranked.rank_position,ranked.user_id,ranked.rating,ranked.games_rated,ranked.peak_rating FROM
-  (SELECT ROW_NUMBER() OVER(ORDER BY rating DESC,games_rated DESC,user_id ASC) rank_position,user_id,rating,games_rated,peak_rating FROM player_rankings WHERE games_rated>0) ranked WHERE ranked.user_id=?
-  """,(rs,n)->new CurrentRanking(rs.getLong(1),rs.getLong(2),rs.getInt(3),rs.getLong(4),rs.getInt(5)),userId);
-  return rows.isEmpty()?new CurrentRanking(null,userId,1000,0,1000):rows.getFirst();}
+  SELECT ranked.rank_position,ranked.user_id,u.username,pp.display_name,ranked.rating,ranked.games_rated,ranked.peak_rating FROM
+  (SELECT ROW_NUMBER() OVER(ORDER BY rating DESC,games_rated DESC,user_id ASC) rank_position,user_id,rating,games_rated,peak_rating FROM player_rankings WHERE games_rated>0) ranked
+  JOIN users u ON u.id=ranked.user_id LEFT JOIN player_profiles pp ON pp.user_id=ranked.user_id WHERE ranked.user_id=?
+  """,RankingService::ranking,userId);
+  if(!rows.isEmpty())return rows.getFirst();
+  Identity identity=jdbc.queryForObject("SELECT u.username,pp.display_name FROM users u LEFT JOIN player_profiles pp ON pp.user_id=u.id WHERE u.id=?",(rs,n)->new Identity(rs.getString(1),rs.getString(2)),userId);
+  return new CurrentRanking(null,userId,identity.username,identity.displayName,1000,0,1000);}
  public Page leaderboard(int page,int size){validate(page,size);long total=Optional.ofNullable(jdbc.queryForObject("SELECT COUNT(*) FROM player_rankings WHERE games_rated>0",Long.class)).orElse(0L);List<CurrentRanking> items=jdbc.query("""
-  SELECT rank_position,user_id,rating,games_rated,peak_rating FROM (SELECT ROW_NUMBER() OVER(ORDER BY rating DESC,games_rated DESC,user_id ASC) rank_position,user_id,rating,games_rated,peak_rating FROM player_rankings WHERE games_rated>0) x ORDER BY rank_position LIMIT ? OFFSET ?
-  """,(rs,n)->new CurrentRanking(rs.getLong(1),rs.getLong(2),rs.getInt(3),rs.getLong(4),rs.getInt(5)),size,Math.multiplyExact(page,size));return new Page(items,page,size,total);}
+  SELECT x.rank_position,x.user_id,u.username,pp.display_name,x.rating,x.games_rated,x.peak_rating
+  FROM (SELECT ROW_NUMBER() OVER(ORDER BY rating DESC,games_rated DESC,user_id ASC) rank_position,user_id,rating,games_rated,peak_rating FROM player_rankings WHERE games_rated>0) x
+  JOIN users u ON u.id=x.user_id LEFT JOIN player_profiles pp ON pp.user_id=x.user_id ORDER BY x.rank_position LIMIT ? OFFSET ?
+  """,RankingService::ranking,size,Math.multiplyExact(page,size));return new Page(items,page,size,total);}
  public List<History> history(long userId,int page,int size){validate(page,size);return jdbc.query("SELECT game_session_id,old_rating,new_rating,rating_delta,session_net,placement,participant_count,created_at FROM ranking_history WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",(rs,n)->new History(rs.getLong(1),rs.getInt(2),rs.getInt(3),rs.getInt(4),rs.getLong(5),rs.getInt(6),rs.getInt(7),rs.getTimestamp(8).toInstant()),userId,size,Math.multiplyExact(page,size));}
  private static void validate(int page,int size){if(page<0||size<1||size>100)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"page must be non-negative and size between 1 and 100");}
- private record Rating(int rating,long games,int peak){} public record CurrentRanking(Long rank,long userId,int rating,long gamesRated,int peakRating){} public record Page(List<CurrentRanking> items,int page,int size,long total){} public record History(long gameSessionId,int oldRating,int newRating,int ratingDelta,long sessionNet,int placement,int participantCount,Instant createdAt){}
+ private static CurrentRanking ranking(java.sql.ResultSet rs,int row)throws java.sql.SQLException{return new CurrentRanking(rs.getLong(1),rs.getLong(2),rs.getString(3),rs.getString(4),rs.getInt(5),rs.getLong(6),rs.getInt(7));}
+ private record Rating(int rating,long games,int peak){} private record Identity(String username,String displayName){} public record CurrentRanking(Long rank,long userId,String username,String displayName,int rating,long gamesRated,int peakRating){} public record Page(List<CurrentRanking> items,int page,int size,long total){} public record History(long gameSessionId,int oldRating,int newRating,int ratingDelta,long sessionNet,int placement,int participantCount,Instant createdAt){}
 }

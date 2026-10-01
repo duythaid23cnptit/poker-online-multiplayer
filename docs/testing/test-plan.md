@@ -50,7 +50,7 @@ Tests should reset only the explicitly verified test schema using controlled fix
 
 ## Security tests
 
-- Registration/login validation, password hashing, rate-limit behavior, and generic authentication failures.
+- Registration/login validation, password hashing, account-lock behavior, and generic authentication failures.
 - JWT valid/expired/tampered/wrong-signature cases; refresh rotation, logout/revocation, reuse, and account lock.
 - REST role/object authorization, including one user accessing another's private data.
 - WebSocket `CONNECT`, `SUBSCRIBE`, and `SEND` authorization independently.
@@ -65,6 +65,7 @@ Tests should reset only the explicitly verified test schema using controlled fix
 - Game command correlation and authoritative event versions.
 - Private hole cards reach exactly the seated owner; opponents and spectators cannot receive them.
 - Disconnect detection with multiple connections, the 60-second grace window, `DISCONNECTED` state, reconnect/resubscribe, and snapshot restoration containing only the player's own hole cards.
+- Startup reconciliation of inherited `ACTIVE` sessions: pessimistic recheck, `ABORTED` timestamp, `PLAYING` to `FINISHED`, membership finalization, exact chip refund, conservation, and repeated-start idempotency.
 - Turn expiry while disconnected produces `AUTO_CHECK` when legal and otherwise `AUTO_FOLD`.
 - Mid-hand leave produces fold then `LEAVING`; removal waits for hand completion. Waiting-room leave is immediate.
 - Waiting-room owner leave transfers ownership to an eligible player or closes an empty room; owner departure never terminates an active hand.
@@ -95,7 +96,7 @@ With Vitest and React Testing Library:
 
 - authentication forms, protected/admin routes, profile/friends/room forms, Zod errors, and accessible interactions;
 - TanStack Query loading/error/cache invalidation for REST resources;
-- Zustand realtime store applies sequential versions, ignores duplicates, detects gaps, and replaces state from snapshots;
+- game reconciliation applies authoritative snapshots, ignores duplicate/older events, resets across hands, and rehydrates on reconnect;
 - STOMP lifecycle, subscription cleanup, reconnect/backoff, and private/public event routing with mocked transport;
 - room/lobby views for owner/player/spectator roles;
 - poker action controls render only server-provided legal choices and remain pending until authoritative response;
@@ -124,7 +125,7 @@ Before claiming a phase/change complete:
 - run the relevant backend unit and integration tests;
 - run frontend unit/component tests;
 - run Maven and frontend production builds when those projects exist;
-- run architecture/boundary checks and Flyway validation when introduced;
+- run architecture/boundary checks and Flyway validation;
 - record commands, results, skipped checks, and environmental limitations in the handoff.
 
-Coverage percentages may support review but do not replace scenario and invariant coverage. Phase 0 has no executable code, so verification consists of repository/file checks and documentation consistency review.
+Coverage percentages may support review but do not replace scenario and invariant coverage. The release gate records test, build, lint, database, and skipped-test results explicitly.

@@ -15,6 +15,10 @@ public interface RoomPlayerRepository extends JpaRepository<RoomPlayerEntity, Lo
 
     List<RoomPlayerEntity> findAllByRoomIdAndLeftAtIsNullOrderById(Long roomId);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select member from RoomPlayerEntity member where member.roomId = :roomId and member.leftAt is null order by member.id")
+    List<RoomPlayerEntity> findAllActiveByRoomIdForUpdate(Long roomId);
+
     long countByRoomIdAndSeatNumberIsNotNullAndLeftAtIsNull(Long roomId);
 
     boolean existsByRoomIdAndSeatNumberAndLeftAtIsNull(Long roomId, Integer seatNumber);

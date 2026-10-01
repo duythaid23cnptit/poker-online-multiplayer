@@ -1,217 +1,148 @@
-# Initial REST API Proposal
+# REST API
 
-## Conventions
+The implemented API uses JSON under `/api/v1`. Except for registration, login, refresh, and the health probe, requests require `Authorization: Bearer <access-token>`. User identity always comes from the authenticated principal. Player application routes require `ROLE_PLAYER`; administration routes require `ROLE_ADMIN`. Logout and `GET /me` are shared by both authenticated roles.
 
-- Base path: `/api/v1`; JSON over HTTPS.
-- Authentication: `Authorization: Bearer <access-token>` except registration, login, and refresh. Tokens/passwords never appear in URLs.
-- IDs are opaque UUID strings. Times are ISO-8601 UTC instants. Chip amounts are integral, non-negative values represented as JSON numbers within the agreed 64-bit range.
-- Validate payloads with Jakarta Validation. Unknown/invalid enum values return `400`.
-- Collection endpoints use cursor pagination where feeds can grow; responses include `items` and `nextCursor`.
-- Mutating requests that may be retried should accept `Idempotency-Key`; game actions use `clientActionId` through STOMP.
-- Resource conflicts/stale writes return `409`; authorization failures return `403`; missing or intentionally concealed resources return `404`; validation returns `400` or `422` according to the final convention.
+The full endpoint-to-frontend audit is maintained in [contract-traceability.md](contract-traceability.md).
 
-Standard error:
+## Errors and validation
+
+Application errors use:
 
 ```json
 {
-  "code": "ROOM_FULL",
-  "message": "The room has no available seats.",
-  "correlationId": "opaque-id",
-  "fieldErrors": [{ "field": "displayName", "code": "SIZE" }]
+  "code": "SEAT_OCCUPIED",
+  "message": "Seat is occupied",
+  "fieldErrors": []
 }
 ```
 
-The message is safe for users; stack traces and secrets are never returned. The exact cookie-versus-response-body refresh-token mechanism remains a security design decision. If cookies are used, apply Secure, HttpOnly, SameSite, and CSRF protections.
+Jakarta request validation returns `400 VALIDATION_FAILED` with `fieldErrors` containing `field`, validation `code`, and safe `message`. Malformed JSON and invalid path/query values return `400 INVALID_REQUEST`. Missing authentication returns `401 UNAUTHORIZED`; a Spring Security role denial returns `403 FORBIDDEN`. Unexpected failures return `500 INTERNAL_ERROR` without internals.
 
-## Authentication
+Controllers that translate a `ResponseStatusException` currently expose the shared wire code `INVALID_REQUEST` with the controller's safe reason. Room, friendship, authentication, and admin-moderation business exceptions preserve their specific codes.
 
-| Method | Path | Purpose | Request / response summary |
-|---|---|---|---|
-| POST | `/auth/register` | Create account/profile atomically | username, password, optional email, display name → safe current-user response (`201`) |
-| POST | `/auth/login` | Authenticate by username | username/password → JWT access token and opaque refresh token |
-| POST | `/auth/refresh` | Issue a new access token | opaque refresh token → JWT access token; no rotation in the Phase 3 baseline |
-| POST | `/auth/logout` | Revoke the supplied refresh token owned by the authenticated principal | bearer access token + refresh token → `204` |
+## Authentication and current player
 
-Registration and login validate input. Login uses a generic invalid-credentials response for unknown usernames and wrong passwords; locked accounts are forbidden. Rate limiting is planned but not implemented in Phase 3.
+| Method | Path | Authentication | Request | Response | Success |
+|---|---|---|---|---|---:|
+| POST | `/auth/register` | Public | `username` (3-50, letters/numbers/underscore), `password` (8-72), optional `email`, `displayName` (2-100) | current user | 201 |
+| POST | `/auth/login` | Public | `username`, `password` | access token, opaque refresh token, `tokenType: "Bearer"`, expiry seconds | 200 |
+| POST | `/auth/refresh` | Public | `refreshToken` | access token, `tokenType: "Bearer"`, expiry seconds | 200 |
+| POST | `/auth/logout` | Bearer | `refreshToken` | none | 204 |
+| GET | `/me` | Bearer | none | current user/account/profile | 200 |
+| PATCH | `/me` | `ROLE_PLAYER` | `displayName`, nullable `avatarUrl` | updated current user | 200 |
 
-## Player and profile
+The current-user response contains `id`, `username`, nullable `email`, `role` (`PLAYER` or `ADMIN`), `accountStatus` (`ACTIVE` or `LOCKED`), `accountChips`, `displayName`, nullable `avatarUrl`, and `onlineStatus` (`ONLINE`, `IN_GAME`, or `OFFLINE`). Password hashes and tokens never appear in it.
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/me` | Current account/profile resolved exclusively from the authenticated principal |
-| PATCH | `/me` | Update only the current user's display name and optional avatar URL |
-| GET | `/players/{playerId}` | Public player summary |
-| GET | `/players/{playerId}/match-history` | Paginated completed sessions/hands visible to requester |
-| GET | `/players/{playerId}/statistics` | Public statistics projection |
+Authentication business codes include `AUTHENTICATION_FAILED`, `ACCOUNT_LOCKED`, `INVALID_REFRESH_TOKEN`, `DUPLICATE_ACCOUNT`, and `PROFILE_NOT_FOUND`.
 
-## Social
+## Rooms and waiting-room lifecycle
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/friends` | Friend list with current presence projection |
-| GET | `/friend-requests?direction=incoming|outgoing` | Pending requests |
-| POST | `/friend-requests` | Send request `{ "recipientId": "..." }` |
-| POST | `/friend-requests/{requestId}/accept` | Accept request |
-| POST | `/friend-requests/{requestId}/reject` | Reject request |
-| DELETE | `/friends/{friendId}` | Remove friendship |
-| GET | `/rooms/{roomId}/messages` | Authorized paginated room chat history |
+Every route in this section requires `ROLE_PLAYER`.
 
-Realtime friend notifications/presence and new chat messages use STOMP.
+| Method | Path | Request/query | Response | Success |
+|---|---|---|---|---:|
+| POST | `/rooms` | `CreateRoomRequest` | room detail | 201 |
+| GET | `/rooms` | none | waiting-room summaries | 200 |
+| GET | `/rooms/{roomId}` | room ID | room detail | 200 |
+| POST | `/rooms/{roomId}/join` | `JoinRoomRequest` | room detail | 200 |
+| POST | `/rooms/{roomId}/leave` | room ID | room detail after departure | 200 |
 
-Phase 10A.2 implements the friendship endpoints above; `friendId` on DELETE is the other user's ID. Requester identity comes only from the authenticated principal. A user cannot request themselves; both users must exist and an absent or inactive recipient returns `404 PLAYER_NOT_FOUND`. One canonical pair has one row. A new request returns `201`; a crossed request reuses and accepts the pending row and returns `200`. A same-direction duplicate returns `409 FRIEND_REQUEST_ALREADY_EXISTS`; an accepted pair returns `409 FRIENDSHIP_ALREADY_EXISTS`. A rejected row is reopened as `PENDING` in place with the new direction and creation time and a null response time. Only the current recipient may accept or reject; another caller receives `403 FRIEND_REQUEST_NOT_AUTHORIZED`, while a completed response receives `409 FRIEND_REQUEST_NOT_PENDING`. Missing requests/friendships return `404`. Removing an accepted friendship hard-deletes it and returns `204`.
+`CreateRoomRequest` contains `name`, `roomType` (`PUBLIC` or `PRIVATE`), `maxPlayers` (6-9), `smallBlind`, `bigBlind`, `buyIn`, and nullable `password`. The big blind must exceed the small blind. A private room requires an 8-72 character password; a public room rejects one.
 
-Incoming and outgoing lists contain only pending requests ordered by creation time descending then request ID descending. The accepted friend list is symmetric and ordered case-insensitively by display name then user ID. Phase 10A.2 uses unpaginated lists because no social pagination contract is frozen and expected lists are bounded; pagination can be added without changing lifecycle rules. Responses contain only request metadata and the other player's `userId`, `displayName`, and optional `avatarUrl`. Accepted `GET /friends` items additionally contain `presenceStatus` (`ONLINE` or `OFFLINE`); request-list items do not project another user's presence. They never expose credentials, email, role, account state, chip balances, session IDs, or connection counts.
+`JoinRoomRequest` contains `spectator`, nullable `seatNumber`, nullable `buyInAmount`, and nullable `password`. A non-member entering a private room must supply the password. An active authorized spectator converting to a seated player reuses the existing membership and does not reauthenticate the password. The configured fixed buy-in is authoritative.
 
-Phase 10A.3 friendship notifications are a best-effort convenience after the database transaction commits. Offline clients and clients that miss a frame recover authoritative state through `GET /friend-requests` and `GET /friends`; REST/database state never depends on broker delivery.
+A room summary contains `id`, `name`, `ownerUserId`, `roomType`, `passwordRequired`, `status`, `seatedPlayers`, `maxPlayers`, blinds, and buy-in. Room detail adds active members with `userId`, authoritative `username`, nullable `seatNumber`, `state`, and `tableChips`.
 
-Phase 10C defines presence from authenticated STOMP connections, not REST login or token lifetime. The first active session persists `ONLINE`; the last disconnect persists `OFFLINE`. The persisted friend-list projection is authoritative for recovery, while `FRIEND_STATUS_CHANGED` is a private, best-effort post-commit update sent only to accepted friends.
+Waiting-room summaries are authenticated lobby data. Detail for a room outside `WAITING` requires active membership. Room business codes include `ROOM_NOT_FOUND`, `ROOM_DETAIL_FORBIDDEN`, `ROOM_NOT_JOINABLE`, `INVALID_ROOM_PASSWORD`, `ALREADY_JOINED`, `SEAT_REQUIRED`, `INVALID_SEAT`, `SEAT_OCCUPIED`, `ROOM_FULL`, `INVALID_BUY_IN`, `INSUFFICIENT_CHIPS`, `SEAT_OR_MEMBERSHIP_CONFLICT`, `INVALID_ROOM_STATE`, `NOT_ROOM_MEMBER`, `SPECTATOR_CANNOT_READY`, `ACTIVE_GAME_LEAVE_UNAVAILABLE`, and `MEMBERSHIP_NOT_FOUND`.
 
-Phase 10B.1 freezes, but does not yet implement, `GET /api/v1/rooms/{roomId}/messages`. Only a current active member (`room_players.left_at IS NULL`), including a spectator, may read normal room history. Query parameters are optional `beforeMessageId` and `limit` (default 50, maximum 100). Absence of a cursor fetches the latest page; a cursor fetches only IDs strictly less than it. Storage is queried by `id DESC`, while each response page is returned chronologically (`id ASC`) with `nextBeforeMessageId` equal to the oldest returned ID and an explicit `hasMore`. This keyset contract avoids OFFSET duplicates/skips while realtime messages arrive.
+## Games and recovery
 
-The planned message DTO contains `messageId`, `roomId`, `clientMessageId`, normalized `content`, `createdAt`, and safe `sender { userId, displayName, avatarUrl }`. It excludes username, email, role, chips, credentials/tokens, room passwords/hashes, and cards. Persisted messages are immutable and retained without automatic TTL; Phase 10B has no edit/delete endpoint. REST history is the recovery source for best-effort STOMP delivery.
+Every route in this section requires `ROLE_PLAYER`, followed by the object-level authorization shown below.
 
-## Lobby and rooms
+| Method | Path | Authorization | Response | Success |
+|---|---|---|---|---:|
+| POST | `/games/rooms/{roomId}/start` | Authenticated room host | active-game identity | 200 |
+| POST | `/games/{gameId}/leave` | Authenticated `PLAYER` participant | departure status | 200 |
+| GET | `/games/{gameId}/snapshot` | Authorized active observer or historical participant | role-filtered game snapshot | 200 |
+| GET | `/games/active/room/{roomId}` | Authorized active observer | active-game identity | 200 |
+| GET | `/games/active/me` | Authenticated active participant | active-game identity | 200 |
 
-Phase 4 uses authenticated `/api/v1/rooms` endpoints. All identities come from the JWT principal; requests never accept an owner or member user ID.
+Only the explicit host start route starts a Game Session. The server locks and revalidates room ownership, `WAITING` state, at least two seated players, all seated players `READY`, valid stacks, and the absence of an active session. Readiness changes never call this route or start a game.
 
-| Method | Path | Phase 4 behavior |
-|---|---|---|
-| `GET` | `/api/v1/rooms` | Sanitized `WAITING` lobby summaries, ordered by latest activity |
-| `POST` | `/api/v1/rooms` | Creates a `WAITING` public/private room and an owner spectator membership |
-| `GET` | `/api/v1/rooms/{roomId}` | Sanitized snapshot for an active member |
-| `POST` | `/api/v1/rooms/{roomId}/join` | Joins/rejoins as spectator or seated player; seated join atomically transfers the configured buy-in |
-| `POST` | `/api/v1/rooms/{roomId}/leave` | Leaves a `WAITING` room, cashes out, releases the seat, and applies owner succession |
+The active-game identity is `roomId`, UUID `gameId`, persistent `gameSessionId`, `handId`, and `handNumber`. A snapshot contains those identifiers, `version`, public state, the requester's own `holeCards`, nullable private `turn`, nullable public `timer`, and `participant`. Public state includes dealer/blind seats, phase, current turn user, current bet/minimum raise, board, public player state, `handCompleted`, and `sessionFinished`.
 
-`CreateRoomRequest` contains `name`, `roomType`, `maxPlayers`, `smallBlind`, `bigBlind`, `buyIn`, and an optional private-room `password`. Public rooms reject passwords. Private passwords are BCrypt hashes at rest and neither raw values nor hashes appear in responses or events.
+Active observers are current room members. Finished snapshots are available only through the persisted game UUID and historical participation policy. Snapshot privacy never returns another player's hole cards.
 
-`JoinRoomRequest` contains `spectator`, optional `seatNumber`, optional `buyInAmount`, and optional private-room `password`. A seated join requires a free seat within `1..maxPlayers` and exactly the configured buy-in. A spectator has a null seat and zero Table Chips. Controlled errors include `ROOM_NOT_FOUND`, `ROOM_NOT_JOINABLE`, `INVALID_ROOM_PASSWORD`, `ALREADY_JOINED`, `ROOM_FULL`, `INVALID_SEAT`, `SEAT_OCCUPIED`, `INVALID_BUY_IN`, and `INSUFFICIENT_CHIPS`.
+Start failures map host denial to 403, a missing room to 404, and lifecycle conflicts to 409. Departure rejects non-player accounts and non-participants with 403 and inactive game state with 409. No active-game lookup returns 404.
 
-In `WAITING`, leave returns all remaining Table Chips to Account Chips atomically. If the owner leaves, ownership transfers to the earliest remaining active membership; an empty room becomes `CLOSED`. Active-game leave is deliberately rejected until the Poker Engine owns that transition.
+## Friends and notifications
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/rooms` | Filtered/paginated public lobby list |
-| POST | `/rooms` | Create room (name, capacity 6–9, visibility, optional password, game settings) in `WAITING` |
-| GET | `/rooms/{roomId}` | Sanitized room snapshot for authorized viewer |
-| POST | `/rooms/{roomId}/join` | Join as player with buy-in or as spectator; optional password only in body |
-| POST | `/rooms/{roomId}/leave` | Leave room |
-| PATCH | `/rooms/{roomId}` | Owner updates allowed pre-game settings |
-| POST | `/rooms/{roomId}/transfer-owner` | Transfer ownership if policy allows |
-| DELETE | `/rooms/{roomId}` | Close an eligible room |
+Every route in this section requires `ROLE_PLAYER`.
 
-Ready/unready can be a STOMP command for responsive room updates. REST may later expose a fallback, but both transports must call the same use case.
+| Method | Path | Request/query | Response | Success |
+|---|---|---|---|---:|
+| POST | `/friend-requests` | `{ "recipientUserId": number }` | friendship view | 201 for a new row, otherwise 200 |
+| GET | `/friend-requests` | required `direction=incoming` or `outgoing` | pending friendship views | 200 |
+| POST | `/friend-requests/{requestId}/accept` | request ID | friendship view | 200 |
+| POST | `/friend-requests/{requestId}/reject` | request ID | friendship view | 200 |
+| GET | `/friends` | none | accepted friendships with presence | 200 |
+| DELETE | `/friends/{friendId}` | the other user's ID | none | 204 |
 
-Example create request:
+A friendship view contains request metadata and only the other player's safe `userId`, `displayName`, and nullable `avatarUrl`. `presenceStatus` is included only where the server projects it. Email, roles, chips, credentials, room data, and game data are excluded.
 
-```json
-{
-  "name": "Friday Table",
-  "capacity": 6,
-  "visibility": "PRIVATE",
-  "password": "request-only-secret",
-  "smallBlind": 10,
-  "bigBlind": 20,
-  "minBuyIn": 2000
-}
-```
+Business codes include `SELF_FRIEND_REQUEST`, `PLAYER_NOT_FOUND`, `FRIEND_REQUEST_ALREADY_EXISTS`, `FRIENDSHIP_ALREADY_EXISTS`, `FRIEND_REQUEST_NOT_FOUND`, `FRIEND_REQUEST_NOT_AUTHORIZED`, `FRIEND_REQUEST_NOT_PENDING`, and `FRIENDSHIP_NOT_FOUND`.
 
-Responses expose `passwordProtected: true`, never the password or hash.
+## Room chat history
 
-For a player join, `buyIn` is an Account Chip amount transferred atomically to Table Chips by the server. The server rejects insufficient Account Chips and never trusts a client-reported balance. A legal leave returns remaining Table Chips to Account Chips. Room states are `WAITING`, `PLAYING`, `FINISHED`, and `CLOSED`; room-player states are `NOT_READY`, `READY`, `PLAYING`, `SPECTATING`, `DISCONNECTED`, and `LEAVING`.
+This route requires `ROLE_PLAYER` and active room membership.
 
-Leaving in `WAITING` is immediate. Leaving during an active Poker Hand causes an authoritative fold, preserves committed pot chips, sets `LEAVING`, and defers removal/cash-out until hand completion. If a waiting-room owner leaves, ownership transfers to an eligible player or the empty room closes; an active hand is never terminated merely because its owner leaves or disconnects.
+| Method | Path | Query | Response | Success |
+|---|---|---|---|---:|
+| GET | `/rooms/{roomId}/chat/messages` | `limit`, default 50, range 1-100 | chronological recent messages | 200 |
 
-## Games and history
+The requester must be an active member, including a spectator, and the room must not be closed. Each message contains `messageId`, `roomId`, UUID `clientMessageId`, normalized `content`, `createdAt`, and safe sender projection. Realtime insertion uses the STOMP contract; history is the recovery source after F5 or reconnect.
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/games/{gameId}/snapshot` | Role-filtered authoritative recovery/bootstrap snapshot |
-| GET | `/games/{gameId}` | Session metadata/status |
-| GET | `/games/{gameId}/hands` | Paginated completed hand summaries |
-| GET | `/games/{gameId}/hands/{handId}` | Authorized hand detail/action history |
-| GET | `/games/{gameId}/actions` | Auditable, visibility-filtered action feed |
+## Rankings, statistics, and analytics
 
-Live poker actions are sent only through the documented serialized command path, initially STOMP. Snapshot responses contain `stateVersion`, current `turnId` if applicable, `serverTime`, and `turnDeadline`, and are filtered so only the requesting seated player receives their own hole cards.
+Every route in this section requires `ROLE_PLAYER`.
 
-## Ranking and analytics
+| Method | Path | Query | Response | Success |
+|---|---|---|---|---:|
+| GET | `/rankings/me` | none | current rating, games, peak, nullable global rank | 200 |
+| GET | `/rankings/leaderboard` | `page` default 0, `size` default 20 (1-100) | page with `items`, `page`, `size`, `total`; each item includes `userId`, nullable `username`, nullable `displayName`, `rank`, `rating`, `gamesRated`, and `peakRating` | 200 |
+| GET | `/rankings/me/history` | `page` default 0, `size` default 20 (1-100) | rating history array | 200 |
+| GET | `/players/me/statistics` | none | authoritative lifetime player statistics | 200 |
+| GET | `/analytics/me/daily` | required ISO dates `from`, `to`; max 366-day span | stored daily buckets in ascending order | 200 |
+| GET | `/analytics/me/weekly` | required ISO dates `from`, `to`; max 104 normalized weeks | stored Monday-start weekly buckets | 200 |
+| GET | `/analytics/me/summary` | none | explicit today/current-week buckets, including zeros | 200 |
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/leaderboard` | Paginated/filterable current rankings |
-| GET | `/players/{playerId}/ranking-history` | Rank history |
-| GET | `/analytics/summary` | Authorized current platform summary |
-| GET | `/analytics/daily` | Authorized daily series |
-| GET | `/analytics/weekly` | Authorized weekly series |
-
-Visibility of analytics remains unresolved: public aggregate metrics should be separated from admin-only operational metrics.
+Statistics and analytics derive identity from the JWT and accept no player ID. They expose completed-history counts, wins/losses/ties, chip movement, largest pot, play time, sessions, and net chips. Missing history returns zeros or an empty range, never fabricated play.
 
 ## Administration
 
-All endpoints require an admin role and produce an audit record.
+Every route below requires `ROLE_ADMIN`. Hiding the frontend route is convenience only; Spring Security remains authoritative. Read responses exclude secrets, password hashes, private-room password hashes, refresh tokens, and hole cards.
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/admin/users` | Search/page users |
-| GET | `/admin/users/{userId}` | Moderation detail |
-| POST | `/admin/users/{userId}/lock` | Lock with reason and optional expiry |
-| POST | `/admin/users/{userId}/unlock` | Unlock with reason |
-| GET | `/admin/rooms` | Monitor rooms |
-| GET | `/admin/games` | Monitor active/recent games |
-| GET | `/admin/statistics` | Operational dashboard |
-| POST | `/admin/games/{gameId}/terminate` | Exceptional audited termination, subject to policy |
+| Method | Path | Query/body | Response | Success |
+|---|---|---|---|---:|
+| GET | `/admin/overview` | none | platform overview | 200 |
+| GET | `/admin/users` | `page`, `size`, `search`, `status`, `role` | user page | 200 |
+| GET | `/admin/users/{id}` | user ID | safe user/profile/ranking/statistics detail | 200 |
+| POST | `/admin/users/{id}/suspend` | optional `{ "reason": string }` | mutation status | 200 |
+| POST | `/admin/users/{id}/reactivate` | optional reason | mutation status | 200 |
+| GET | `/admin/rooms` | `page`, `size`, `search`, `status`, `roomType` | room page | 200 |
+| GET | `/admin/rooms/{id}` | room ID | room configuration and membership history | 200 |
+| POST | `/admin/rooms/{roomId}/players/{userId}/remove` | optional reason | mutation status | 200 |
+| POST | `/admin/rooms/{id}/close` | optional reason | mutation status | 200 |
+| GET | `/admin/games` | `page`, `size`, `status`, `roomId`, `userId`, `from`, `to` | session page | 200 |
+| GET | `/admin/games/{id}` | session ID | safe session/participant detail | 200 |
+| GET | `/admin/games/{id}/hands` | `page`, `size` | persisted hand page | 200 |
+| POST | `/admin/games/{id}/terminate` | optional reason | mutation status | 200 |
+| GET | `/admin/audit-log` | pagination, `adminUserId`, `actionType`, `targetType`, `targetId`, `from`, `to` | audit page | 200 |
 
-## Deferred contract decisions
+List sizes are 1-100. Admin game date ranges are at most 366 days. The supported audit actions are `USER_SUSPENDED`, `USER_REACTIVATED`, `PLAYER_REMOVED_FROM_ROOM`, `ROOM_CLOSED`, and `GAME_TERMINATED`; targets are `USER`, `ROOM`, and `GAME_SESSION`.
 
-- Account identifier/login policy and verification/recovery requirements.
-- Refresh-token rotation and broader session/device management. Phase 3 returns a non-rotating opaque refresh token, persists only its SHA-256 hash, and revokes it on logout.
-- Cursor format, consistent `400` versus `422`, and formal OpenAPI publication.
-- Buy-in limits, rebuy eligibility/limits, and insufficient-funds/error policy. The Account Chip to Table Chip model itself is approved.
-- Chat retention/moderation, history visibility, and spectator permissions.
-- Admin termination/refund semantics.
-## Player statistics
+Mutation reasons are optional, trimmed, and limited to 500 characters. Mutations are idempotent when the requested state already exists. User status changes and their audit row share a transaction. Active-hand removals and terminations may return `deferred: true`; they enter the normal per-game lock and complete at a safe hand boundary.
 
-`GET /api/v1/players/me/statistics` requires an access token and derives the user from the authenticated principal. A user without completed history receives a zero-valued response rather than 404. Clients cannot submit or mutate official statistics.
+## Infrastructure
 
-Definitions: a game is a finished game session containing at least one completed hand for the player. A session is a win or loss when the sum of its hand chip deltas is positive or negative; zero is neutral but still counts as a game. Win rate is wins divided by all games, as a percentage. Chips won/lost are positive and absolute-negative completed-hand deltas; net chip is their difference. Largest pot won is the player's largest actual persisted pot award, including split/side-pot semantics. Average playing time is the average, in whole seconds, between the earliest participated completed-hand start and latest participated completed-hand finish in each completed session.
-## Rankings
-
-Authenticated endpoints are `GET /api/v1/rankings/me`, `GET /api/v1/rankings/leaderboard?page=0&size=20`, and `GET /api/v1/rankings/me/history?page=0&size=20`. Sizes are limited to 1–100. Unrated users return rating/peak 1000, zero games, and null rank; they are excluded from the leaderboard.
-# Player time-bucket analytics
-
-Authenticated current-player endpoints are:
-
-- `GET /api/v1/analytics/me/daily?from=YYYY-MM-DD&to=YYYY-MM-DD` (maximum 366
-  inclusive calendar days).
-- `GET /api/v1/analytics/me/weekly?from=YYYY-MM-DD&to=YYYY-MM-DD` (both dates
-  normalize to their containing Monday; maximum 104 inclusive weeks).
-- `GET /api/v1/analytics/me/summary` for today's and the current Monday-start
-  week's buckets.
-
-Range endpoints return only stored data-bearing buckets in ascending order.
-Summary returns explicit zero-valued DTOs when current data is absent without
-persisting zero rows. Identity always comes from the JWT principal.
-# Phase 9A read-only admin API
-
-Every `/api/v1/admin/**` endpoint requires `ROLE_ADMIN`; unauthenticated callers
-receive 401 and authenticated players receive 403. Phase 9A exposes read-only
-`GET` endpoints for `/overview`, `/users`, `/users/{id}`, `/rooms`,
-`/rooms/{id}`, `/games`, `/games/{id}`, and `/games/{id}/hands`.
-
-Lists use `page=0`, `size=20` defaults and enforce `page >= 0` and
-`1 <= size <= 100`. Users support bound `search`, `status`, and `role` filters;
-rooms support `search`, `status`, and `roomType`; games support `status`,
-`roomId`, `userId`, `from`, and `to`. Default ordering is deterministic and
-server-defined. Responses never include password hashes, tokens, private-room
-hashes, or hole cards.
-## Admin moderation (Phase 9B)
-
-All routes below require the current authenticated principal to have `ADMIN`; actor identifiers are never accepted from request data.
-
-- `POST /api/v1/admin/users/{userId}/suspend` changes `ACTIVE` to the established `LOCKED` status. Self-suspension returns 409. Repeating an effective suspension is an unchanged 200 response and creates no second audit row.
-- `POST /api/v1/admin/users/{userId}/reactivate` changes `LOCKED` to `ACTIVE`; an already-active user is unchanged and is not audited again.
-- `POST /api/v1/admin/rooms/{roomId}/players/{userId}/remove` cashes out an idle member immediately. During a hand it records a safe leave intent, rejects further voluntary actions, preserves commitments, and finalizes departure after settlement.
-- `POST /api/v1/admin/rooms/{roomId}/close` closes only a room without an active game; otherwise it returns 409 and requires explicit game termination first.
-- `POST /api/v1/admin/games/{gameSessionId}/terminate` finishes between hands immediately. During a hand it returns `TERMINATION_REQUESTED` with `deferred=true`, prevents another hand, lets authoritative settlement complete, then cashes out and finishes the session. The single `GAME_TERMINATED` audit row records acceptance of that request and carries `terminationStatus=REQUESTED`; it does not falsely claim boundary completion.
-- `GET /api/v1/admin/audit-log` supports `page`, `size`, `adminUserId`, `actionType`, `targetType`, `targetId`, `from`, and `to`; ordering is `createdAt DESC, id DESC`.
-
-Mutation bodies optionally contain `reason` (trimmed, blank-as-null, maximum 500 characters). Successful state changes and their audit row share the request transaction. Responses contain only status, target ID, changed, and deferred fields.
+`GET /actuator/health` is public and exists for process/deployment health checks. It is intentionally absent from the product UI.

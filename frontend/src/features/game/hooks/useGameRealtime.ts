@@ -19,6 +19,8 @@ export function useGameRealtime(roomId: number, gameId: string) {
   useEffect(() => {
     let active = true
     let hydrating = true
+    let hydrated = false
+    let hydrationInFlight = false
     const buffered: GameRealtimeEvent[] = []
     const receive = (body:string) => {
       const event=parseGameEvent(body)
@@ -28,21 +30,32 @@ export function useGameRealtime(roomId: number, gameId: string) {
     }
     const stopPublic=stompSession.listen(`/topic/game/${gameId}`,receive)
     const stopPrivate=stompSession.listen('/user/queue/private',receive)
-    const stopConnection=stompSession.listenConnection(setConnected)
     const controller = new AbortController()
     queueMicrotask(() => {
       if (!active) return
       dispatch({ type: 'reset', roomId, gameId }); setSnapshotPending(true); setSnapshotError(null)
     })
-    void gameApi.snapshot(gameId, controller.signal).then((snapshot) => {
-      if (!active) return
-      dispatch({ type: 'snapshot', snapshot })
-    }).catch((error) => { if (active && !controller.signal.aborted) setSnapshotError(error) }).finally(() => {
-      if (!active) return
-      hydrating = false
-      buffered.forEach((event) => dispatch({ type: 'event', event }))
-      setSnapshotPending(false)
+    const hydrate = (initial: boolean) => {
+      if (hydrationInFlight) return
+      hydrationInFlight = true
+      hydrating = true
+      setSnapshotError(null)
+      void gameApi.snapshot(gameId, controller.signal).then((snapshot) => {
+        if (active) dispatch({ type: 'snapshot', snapshot })
+      }).catch((error) => { if (active && !controller.signal.aborted) setSnapshotError(error) }).finally(() => {
+        if (!active) return
+        hydrationInFlight = false
+        hydrated = true
+        hydrating = false
+        buffered.splice(0).forEach((event) => dispatch({ type: 'event', event }))
+        if (initial) setSnapshotPending(false)
+      })
+    }
+    const stopConnection=stompSession.listenConnection((isConnected) => {
+      setConnected(isConnected)
+      if (isConnected && hydrated) hydrate(false)
     })
+    hydrate(true)
     return ()=>{active=false;controller.abort();stopPublic();stopPrivate();stopConnection()}
   }, [gameId, roomId])
   return { state, connected, snapshotPending, snapshotError }
