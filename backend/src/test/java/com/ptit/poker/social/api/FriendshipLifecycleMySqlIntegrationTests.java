@@ -200,11 +200,15 @@ class FriendshipLifecycleMySqlIntegrationTests {
     void rejectRequiresCurrentRecipient() throws Exception {
         UserEntity a = user(AccountStatus.ACTIVE, Role.PLAYER, "Alpha");
         UserEntity b = user(AccountStatus.ACTIVE, Role.PLAYER, "Beta");
-        UserEntity c = user(AccountStatus.ACTIVE, Role.ADMIN, "Gamma");
+        UserEntity c = user(AccountStatus.ACTIVE, Role.PLAYER, "Gamma");
+        UserEntity admin = user(AccountStatus.ACTIVE, Role.ADMIN, "Administrator");
         long requestId = service.sendFriendRequest(a.getId(), b.getId()).friendship().requestId();
         mvc.perform(post("/api/v1/friend-requests/{id}/reject", requestId)
                         .header(HttpHeaders.AUTHORIZATION, bearer(c)))
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FRIEND_REQUEST_NOT_AUTHORIZED"));
+        mvc.perform(post("/api/v1/friend-requests/{id}/reject", requestId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(admin)))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN"));
         mvc.perform(post("/api/v1/friend-requests/{id}/reject", requestId)
                         .header(HttpHeaders.AUTHORIZATION, bearer(b)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REJECTED"))

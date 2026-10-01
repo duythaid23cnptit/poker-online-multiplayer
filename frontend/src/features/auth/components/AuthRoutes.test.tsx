@@ -1,8 +1,9 @@
 import { screen } from '@testing-library/react'
 import { Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it } from 'vitest'
-import { routes, safeAppReturnPath } from '../../../app/router/routePaths'
-import { renderWithAppContext } from '../../../test/testUtils'
+import { routes, safeRoleReturnPath } from '../../../app/router/routePaths'
+import { profileKeys } from '../../profile/api/profileQueries'
+import { createTestQueryClient, currentUserFixture, renderWithAppContext } from '../../../test/testUtils'
 import { useSessionStore, type SessionStatus } from '../session/sessionStore'
 import { PublicOnlyRoute } from './PublicOnlyRoute'
 import { RequireAuth } from './RequireAuth'
@@ -33,7 +34,9 @@ function renderProtected(initialEntry = '/app/profile?tab=identity') {
   )
 }
 
-function renderPublic(initialEntry = '/login') {
+function renderPublic(initialEntry = '/login', role: 'PLAYER' | 'ADMIN' = 'PLAYER') {
+  const queryClient = createTestQueryClient()
+  queryClient.setQueryData(profileKeys.current(), { ...currentUserFixture, role })
   return renderWithAppContext(
     <Routes>
       <Route element={<PublicOnlyRoute />}>
@@ -41,8 +44,9 @@ function renderPublic(initialEntry = '/login') {
         <Route path="/register" element={<h1>Register form</h1>} />
       </Route>
       <Route path="/app" element={<h1>Authenticated home</h1>} />
+      <Route path="/admin" element={<h1>Administration home</h1>} />
     </Routes>,
-    { initialEntries: [initialEntry] },
+    { initialEntries: [initialEntry], queryClient },
   )
 }
 
@@ -83,18 +87,27 @@ describe('authentication route guards', () => {
     expect(screen.queryByRole('heading', { name: /form/i })).not.toBeInTheDocument()
   })
 
+  it('restores an administrator session into administration', async () => {
+    setStatus('AUTHENTICATED')
+    renderPublic('/login', 'ADMIN')
+
+    expect(await screen.findByRole('heading', { name: 'Administration home' })).toBeVisible()
+  })
+
   it('lets an unauthenticated user reach the public login route', () => {
     setStatus('UNAUTHENTICATED')
     renderPublic()
     expect(screen.getByRole('heading', { name: 'Login form' })).toBeVisible()
   })
 
-  it('accepts only internal app return paths', () => {
-    expect(safeAppReturnPath('/app/profile')).toBe('/app/profile')
-    expect(safeAppReturnPath('/app/profile?tab=identity')).toBe('/app/profile?tab=identity')
-    expect(safeAppReturnPath('https://evil.example/steal')).toBe(routes.app)
-    expect(safeAppReturnPath('//evil.example/steal')).toBe(routes.app)
-    expect(safeAppReturnPath('/application')).toBe(routes.app)
-    expect(safeAppReturnPath(null)).toBe(routes.app)
+  it('accepts return paths only within the authenticated role application', () => {
+    expect(safeRoleReturnPath('/app/profile', 'PLAYER')).toBe('/app/profile')
+    expect(safeRoleReturnPath('/app/profile?tab=identity', 'PLAYER')).toBe('/app/profile?tab=identity')
+    expect(safeRoleReturnPath('/admin/users', 'ADMIN')).toBe('/admin/users')
+    expect(safeRoleReturnPath('/app/rooms', 'ADMIN')).toBe(routes.admin)
+    expect(safeRoleReturnPath('/admin', 'PLAYER')).toBe(routes.app)
+    expect(safeRoleReturnPath('https://evil.example/steal', 'PLAYER')).toBe(routes.app)
+    expect(safeRoleReturnPath('//evil.example/steal', 'ADMIN')).toBe(routes.admin)
+    expect(safeRoleReturnPath(null, 'PLAYER')).toBe(routes.app)
   })
 })

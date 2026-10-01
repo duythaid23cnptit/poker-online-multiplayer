@@ -9,6 +9,7 @@ import { LoadingState } from '../../../shared/ui/LoadingState'
 import { PageHeader } from '../../../shared/ui/PageHeader'
 import { useCurrentRanking, useLeaderboard, useRankingHistory } from '../hooks/useRankings'
 import { RatingChart } from '../components/RatingChart'
+import { RankingPlayerIdentity } from '../components/RankingPlayerIdentity'
 
 export function RankingsPage() {
   const [page, setPage] = useState(0)
@@ -23,7 +24,7 @@ export function RankingsPage() {
     {error && <ErrorState message={getErrorMessage(error)} onRetry={() => queries.forEach((query) => void query.refetch())} />}
     {!queries.some((query) => query.isPending) && !error && <div className="mt-7 grid items-start gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
       <Card className="dashboard-card min-w-0 p-5 sm:p-6"><div className="section-heading"><div><p>Global</p><h2>Leaderboard</h2></div><span>{formatNumber(leaderboard.data?.total || 0)} rated players</span></div>
-        <div className="mt-4 overflow-x-auto" role="region" aria-label="Leaderboard" tabIndex={0}><table className="data-table"><thead><tr><th>Rank</th><th>Player</th><th>Rating</th><th>Games rated</th><th>Peak</th></tr></thead><tbody>{leaderboard.data?.items.map((item) => <tr key={item.userId} className={item.userId === current.data?.userId ? 'current-player-row' : ''}><td>#{item.rank ?? '—'}</td><td><strong>Player #{item.userId}</strong>{item.userId === current.data?.userId && <small>You</small>}</td><td>{formatNumber(item.rating)}</td><td>{formatNumber(item.gamesRated)}</td><td>{formatNumber(item.peakRating)}</td></tr>)}</tbody></table></div>
+        <div className="mt-4 overflow-x-auto" role="region" aria-label="Leaderboard" tabIndex={0}><table className="data-table"><thead><tr><th>Rank</th><th>Player</th><th>Rating</th><th>Games rated</th><th>Peak</th></tr></thead><tbody>{leaderboard.data?.items.map((item) => <tr key={item.userId} className={item.userId === current.data?.userId ? 'current-player-row' : ''}><td>#{item.rank ?? '—'}</td><td><RankingPlayerIdentity player={item} />{item.userId === current.data?.userId && <small>You</small>}</td><td>{formatNumber(item.rating)}</td><td>{formatNumber(item.gamesRated)}</td><td>{formatNumber(item.peakRating)}</td></tr>)}</tbody></table></div>
         {!leaderboard.data?.items.length && <EmptyState variant="compact" motif="chip" title="No rated players yet" description="The leaderboard will populate after completed rated games." />}
         {Boolean(leaderboard.data?.total) && <div className="mt-5 flex items-center justify-between"><Button variant="secondary" type="button" disabled={page === 0} onClick={() => setPage((value) => value - 1)}>Previous</Button><span className="text-sm text-muted">Page {page + 1}</span><Button variant="secondary" type="button" disabled={(page + 1) * 20 >= (leaderboard.data?.total || 0)} onClick={() => setPage((value) => value + 1)}>Next</Button></div>}
       </Card>

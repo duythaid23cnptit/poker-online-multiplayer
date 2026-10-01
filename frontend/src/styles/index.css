@@ -9,6 +9,8 @@
 @import "../features/friends/friends.css";
 @import "../features/rankings/rankings.css";
 @import "../features/profile/profile.css";
+@import "../features/statistics/statistics.css";
+@import "../features/admin/admin.css";
 @import "../features/game/game.css";
 @import "../features/auth/auth.css";
 @import "../styles/animations.css";

@@ -58,8 +58,8 @@ function finishedState(result: GameResultPayload | null = null): GameViewState {
         { rank: 'TWO', suit: 'SPADES' },
       ],
       players: [
-        { userId: 42, seat: 1, tableChips: 1_000, currentBet: 0, participation: 'ACTIVE', connected: true, leaving: false },
-        { userId: 99, seat: 2, tableChips: 0, currentBet: 0, participation: 'ALL_IN', connected: true, leaving: false },
+        { userId: 42, seat: 1, tableChips: 1_000, currentBet: 0, totalCommitted: null, participation: 'ACTIVE', connected: true, leaving: false },
+        { userId: 99, seat: 2, tableChips: 0, currentBet: 0, totalCommitted: null, participation: 'ALL_IN', connected: true, leaving: false },
       ],
       handCompleted: true,
       sessionFinished: true,
@@ -70,7 +70,7 @@ function finishedState(result: GameResultPayload | null = null): GameViewState {
 
 const finalResult: GameResultPayload = {
   handId: 3,
-  awards: [{ potIndex: 0, potType: 'MAIN', potAmount: 1_000, winnerUserIds: [42], winnerPayouts: { '42': 1_000 } }],
+  awards: [{ potIndex: 0, potType: 'MAIN', potAmount: 1_000, winnerUserIds: [42], baseShare: 1_000, oddChipUserIds: [], winnerPayouts: { '42': 1_000 } }],
   uncalledReturns: [],
   finalPlayers: finishedState().publicState!.players,
   endReason: 'SHOWDOWN',

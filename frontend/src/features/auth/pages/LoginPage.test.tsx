@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiClientError } from '../../../shared/api/apiError'
-import { deferred, renderWithAppContext } from '../../../test/testUtils'
+import { currentUserFixture, deferred, renderWithAppContext } from '../../../test/testUtils'
 import { authApi } from '../api/authApi'
 import { establishAuthenticatedSession } from '../session/sessionCoordinator'
 import type { AuthResponse } from '../types/auth'
@@ -30,6 +30,7 @@ function renderLogin(initialEntry: string | { pathname: string; state?: unknown 
       <Route path="/login" element={<LoginPage />} />
       <Route path="/app" element={<h1>Authenticated home</h1>} />
       <Route path="/app/profile" element={<h1>Profile destination</h1>} />
+      <Route path="/admin" element={<h1>Administration destination</h1>} />
     </Routes>,
     { initialEntries: [initialEntry] },
   )
@@ -61,7 +62,7 @@ describe('LoginPage', () => {
 
   it('establishes the session and honors a safe protected return path', async () => {
     vi.mocked(authApi.login).mockResolvedValue(authResponse)
-    vi.mocked(establishAuthenticatedSession).mockResolvedValue()
+    vi.mocked(establishAuthenticatedSession).mockResolvedValue(currentUserFixture)
     const user = userEvent.setup()
     const { queryClient } = renderLogin({ pathname: '/login', state: { from: '/app/profile' } })
 
@@ -78,7 +79,7 @@ describe('LoginPage', () => {
 
   it('ignores an external return target after successful login', async () => {
     vi.mocked(authApi.login).mockResolvedValue(authResponse)
-    vi.mocked(establishAuthenticatedSession).mockResolvedValue()
+    vi.mocked(establishAuthenticatedSession).mockResolvedValue(currentUserFixture)
     const user = userEvent.setup()
     renderLogin({ pathname: '/login', state: { from: 'https://evil.example/steal' } })
 
@@ -86,6 +87,18 @@ describe('LoginPage', () => {
     await user.click(screen.getByRole('button', { name: 'Sign in' }))
 
     expect(await screen.findByRole('heading', { name: 'Authenticated home' })).toBeVisible()
+  })
+
+  it('routes an administrator directly to administration and rejects a player return path', async () => {
+    vi.mocked(authApi.login).mockResolvedValue(authResponse)
+    vi.mocked(establishAuthenticatedSession).mockResolvedValue({ ...currentUserFixture, role: 'ADMIN' })
+    const user = userEvent.setup()
+    renderLogin({ pathname: '/login', state: { from: '/app/rooms' } })
+
+    await enterCredentials(user)
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
+
+    expect(await screen.findByRole('heading', { name: 'Administration destination' })).toBeVisible()
   })
 
   it('shows a safe backend authentication error without leaking internals', async () => {
@@ -108,7 +121,7 @@ describe('LoginPage', () => {
   it('disables submission while login is pending and sends only one request', async () => {
     const pending = deferred<AuthResponse>()
     vi.mocked(authApi.login).mockReturnValue(pending.promise)
-    vi.mocked(establishAuthenticatedSession).mockResolvedValue()
+    vi.mocked(establishAuthenticatedSession).mockResolvedValue(currentUserFixture)
     const user = userEvent.setup()
     renderLogin()
 

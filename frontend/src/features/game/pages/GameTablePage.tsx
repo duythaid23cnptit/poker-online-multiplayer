@@ -19,6 +19,10 @@ import { useGameDeparture } from '../hooks/useGameDeparture'
 import { roomKeys } from '../../rooms/api/roomQueries'
 import { chatKeys } from '../api/chatQueries'
 import { useGameDiscoveryStore } from '../hooks/gameDiscoveryStore'
+import { stompSession } from '../../../shared/realtime/stompSession'
+import { parseRoomEvent } from '../../rooms/realtime/roomEvent'
+import { cacheRoomDetail } from '../../rooms/api/roomCache'
+import type { RoomDetail } from '../../rooms/types/room'
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -53,6 +57,14 @@ function ValidGamePage({ roomId, gameId }: { roomId: number; gameId: string }) {
   const presentationPublicState = presentationState.publicState
   const presentationRoom = room.data
   const renderTerminal = terminal && !departure.pending
+
+  useEffect(() => stompSession.listen(`/topic/room/${roomId}`, (body) => {
+    const event = parseRoomEvent(body)
+    if (!event || event.scope.roomId !== roomId) return
+    const payload = event.payload as Partial<RoomDetail> | null
+    if (payload?.room && Array.isArray(payload.members)) cacheRoomDetail(queryClient, payload as RoomDetail)
+    else void queryClient.invalidateQueries({ queryKey: roomKeys.detail(roomId) })
+  }), [queryClient, roomId])
 
   useEffect(() => {
     if (!renderTerminal) return

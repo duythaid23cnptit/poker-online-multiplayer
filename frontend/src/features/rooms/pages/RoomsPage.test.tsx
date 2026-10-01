@@ -67,7 +67,14 @@ describe('RoomsPage membership restoration', () => {
     const { queryClient } = renderRoomsPage()
     await screen.findByText('Active membership')
 
-    act(() => roomFrame?.(JSON.stringify({ type: 'PLAYER_JOINED', payload: live })))
+    act(() => roomFrame?.(JSON.stringify({
+      protocolVersion: 1,
+      eventId: '123e4567-e89b-12d3-a456-426614174001',
+      type: 'PLAYER_JOINED',
+      occurredAt: '2026-09-01T00:00:00Z',
+      scope: { roomId: room.id },
+      payload: live,
+    })))
     act(() => roomFrame?.(JSON.stringify({ protocolVersion: 1,
       eventId: '123e4567-e89b-12d3-a456-426614174000', type: 'GAME_STARTED', occurredAt: '2026-09-01T00:00:00Z',
       scope: { roomId: room.id }, payload: { gameId: '123e4567-e89b-42d3-a456-426614174000',
@@ -75,6 +82,35 @@ describe('RoomsPage membership restoration', () => {
 
     expect(queryClient.getQueryData<RoomDetail>(roomKeys.detail(room.id))?.members)
       .toEqual(expect.arrayContaining([expect.objectContaining({ userId: 4, username: 'vuthai' })]))
+  })
+
+  it('runs room and active-game reconciliation only after a connected session actually disconnects', async () => {
+    let connection: ((connected: boolean) => void) | undefined
+    vi.spyOn(stompSession, 'listen').mockReturnValue(() => {})
+    vi.spyOn(stompSession, 'listenConnection').mockImplementation((listener) => {
+      connection = listener
+      listener(false)
+      return () => {}
+    })
+    vi.spyOn(roomApi, 'list').mockResolvedValue([room])
+    const detail = vi.spyOn(roomApi, 'detail').mockResolvedValue(detailForMembership(2, 'READY'))
+    const activeByRoom = vi.spyOn(gameApi, 'activeByRoom')
+      .mockRejectedValue(new ApiClientError(404, 'GAME_NOT_ACTIVE', 'No active game.'))
+
+    renderRoomsPage()
+    expect(await screen.findByText('Active membership')).toBeVisible()
+    await waitFor(() => expect(detail).toHaveBeenCalledOnce())
+    await waitFor(() => expect(activeByRoom).toHaveBeenCalledOnce())
+
+    act(() => connection?.(true))
+    await waitFor(() => expect(detail).toHaveBeenCalledOnce())
+    await waitFor(() => expect(activeByRoom).toHaveBeenCalledOnce())
+
+    act(() => connection?.(false))
+    act(() => connection?.(true))
+
+    await waitFor(() => expect(detail).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(activeByRoom).toHaveBeenCalledTimes(2))
   })
 
   it('shows the host badge and lets a spectator host start two ready seated players', async () => {

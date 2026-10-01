@@ -12,7 +12,8 @@ import { useCurrentProfile } from '../../profile/hooks/useCurrentProfile'
 import { gameApi } from '../../game/api/gameApi'
 import { useGameDiscoveryStore } from '../../game/hooks/gameDiscoveryStore'
 import { stompSession } from '../../../shared/realtime/stompSession'
-import { parseRoomGameStartedEvent } from '../realtime/roomEvent'
+import { parseRoomEvent, parseRoomGameStartedEvent } from '../realtime/roomEvent'
+import { roomKeys } from '../api/roomQueries'
 import { cacheRoomDetail } from '../api/roomCache'
 import { useJoinRoom, useLeaveRoom, useRoomDetail } from '../hooks/useRooms'
 import { joinRoomSchema, type JoinRoomFormValues } from '../schemas/roomSchemas'
@@ -25,8 +26,8 @@ export function JoinedRoomPanel({ detail, onLeft }: { detail: RoomDetail; onLeft
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const profile = useCurrentProfile()
-  const roomDetail = useRoomDetail(detail.room.id, false)
-  const snapshot = roomDetail.data ?? detail
+  const { data: currentRoomDetail, refetch: refetchRoomDetail } = useRoomDetail(detail.room.id, false)
+  const snapshot = currentRoomDetail ?? detail
   const [takingSeat, setTakingSeat] = useState(false)
   const start = useMutation({
     mutationFn: () => gameApi.start(snapshot.room.id),
@@ -59,19 +60,38 @@ export function JoinedRoomPanel({ detail, onLeft }: { detail: RoomDetail; onLeft
         enterGame(detail.room.id, discovery.payload.gameId)
         return
       }
-      try {
-        const event = JSON.parse(body) as { payload?: RoomDetail }
-        if (event.payload?.room && Array.isArray(event.payload.members)) {
-          cacheRoomDetail(queryClient, event.payload)
-        }
-      } catch { /* Unknown room frames are ignored safely. */ }
+      const event = parseRoomEvent(body)
+      if (!event || event.scope.roomId !== detail.room.id) return
+      const payload = event.payload as Partial<RoomDetail> | null
+      if (payload?.room && Array.isArray(payload.members)) cacheRoomDetail(queryClient, payload as RoomDetail)
+      else {
+        void queryClient.invalidateQueries({ queryKey: roomKeys.detail(detail.room.id) })
+        void queryClient.invalidateQueries({ queryKey: roomKeys.list() })
+      }
     })
     const controller = new AbortController()
-    void gameApi.activeByRoom(detail.room.id, controller.signal).then((game) => {
+    const reconcileActiveGame = () => void gameApi.activeByRoom(detail.room.id, controller.signal).then((game) => {
       if (active && game.roomId === detail.room.id) enterGame(game.roomId, game.gameId)
     }).catch(() => { /* A waiting room normally has no active game. */ })
-    return () => { active = false; controller.abort(); stop() }
-  }, [detail.room.id, navigate, queryClient])
+    reconcileActiveGame()
+    let hasConnected = false
+    let disconnectedAfterConnect = false
+    const stopConnection = stompSession.listenConnection((connected) => {
+      if (!connected) {
+        if (hasConnected) disconnectedAfterConnect = true
+        return
+      }
+      if (!hasConnected) {
+        hasConnected = true
+        return
+      }
+      if (!disconnectedAfterConnect) return
+      disconnectedAfterConnect = false
+      void refetchRoomDetail()
+      reconcileActiveGame()
+    })
+    return () => { active = false; controller.abort(); stop(); stopConnection() }
+  }, [detail.room.id, navigate, queryClient, refetchRoomDetail])
   const ownMember = snapshot.members.find((member) => member.userId === profile.data?.id)
   const canReady = ownMember?.seatNumber != null && (ownMember.state === 'NOT_READY' || ownMember.state === 'READY')
   const occupiedSeats = new Set(snapshot.members.flatMap((member) => member.seatNumber == null ? [] : [member.seatNumber]))
@@ -89,7 +109,7 @@ export function JoinedRoomPanel({ detail, onLeft }: { detail: RoomDetail; onLeft
   const toggleReady = () => stompSession.send(`/app/room/${snapshot.room.id}/ready`, { clientCommandId: crypto.randomUUID(), ready: ownMember?.state !== 'READY' })
   const beginTakingSeat = async () => {
     join.reset()
-    const refreshed = await roomDetail.refetch()
+    const refreshed = await refetchRoomDetail()
     if (!refreshed.data) return
     const occupied = new Set(refreshed.data.members.flatMap((member) => member.seatNumber == null ? [] : [member.seatNumber]))
     const firstAvailable = Array.from({ length: refreshed.data.room.maxPlayers }, (_, index) => index + 1)
@@ -113,7 +133,7 @@ export function JoinedRoomPanel({ detail, onLeft }: { detail: RoomDetail; onLeft
     } catch (error) {
       if (error instanceof ApiClientError && (error.code === 'SEAT_OCCUPIED' || error.code === 'SEAT_OR_MEMBERSHIP_CONFLICT')) {
         setValue('seatNumber', null)
-        await roomDetail.refetch()
+        await refetchRoomDetail()
       }
     }
   })

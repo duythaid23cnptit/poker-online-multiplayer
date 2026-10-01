@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { routes, safeAppReturnPath } from '../../../app/router/routePaths'
+import { routes, safeRoleReturnPath } from '../../../app/router/routePaths'
 import { ApiClientError, getErrorMessage } from '../../../shared/api/apiError'
 import { Button } from '../../../shared/ui/Button'
 import { Card } from '../../../shared/ui/Card'
@@ -25,8 +25,8 @@ export function LoginPage() {
   const submit = handleSubmit(async (values) => {
     if (login.isPending) return
     try {
-      await login.mutateAsync(values)
-      navigate(safeAppReturnPath(state.from), { replace: true })
+      const user = await login.mutateAsync(values)
+      navigate(safeRoleReturnPath(state.from, user.role), { replace: true })
     } catch (error) {
       if (error instanceof ApiClientError) {
         for (const fieldError of error.fieldErrors) {

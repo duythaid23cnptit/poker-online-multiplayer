@@ -108,14 +108,14 @@ describe('game event reconciliation', () => {
       { rank: 'ACE', suit: 'SPADES' } as const,
       { rank: 'KING', suit: 'HEARTS' } as const,
     ], players: [
-      { userId: 1, seat: 1, tableChips: 400, currentBet: 100, participation: 'ACTIVE' as const, connected: true, leaving: false },
-      { userId: 2, seat: 2, tableChips: 400, currentBet: 100, participation: 'ALL_IN' as const, connected: true, leaving: false },
+      { userId: 1, seat: 1, tableChips: 400, currentBet: 100, totalCommitted: 100, participation: 'ACTIVE' as const, connected: true, leaving: false },
+      { userId: 2, seat: 2, tableChips: 400, currentBet: 100, totalCommitted: 100, participation: 'ALL_IN' as const, connected: true, leaving: false },
     ] }
     let state = reduceGameEvent(initialGameState(7, gameId), event('GAME_STATE_UPDATE', finished, 8, 'river'))
     const finalPlayers = finished.players.map((player) => ({ ...player,
       tableChips: player.userId === 1 ? 800 : 0, currentBet: 0 }))
     state = reduceGameEvent(state, event('GAME_RESULT', { handId: 50, awards: [{
-      potIndex: 0, potType: 'MAIN', potAmount: 200, winnerUserIds: [1], winnerPayouts: { '1': 200 },
+      potIndex: 0, potType: 'MAIN', potAmount: 200, winnerUserIds: [1], baseShare: 200, oddChipUserIds: [], winnerPayouts: { '1': 200 },
     }], uncalledReturns: [], finalPlayers, endReason: 'SHOWDOWN' }, 9, 'result'))
     state = reduceGameEvent(state, event('HAND_FINISHED', {
       handId: 50, handNumber: 5, endReason: 'SHOWDOWN',

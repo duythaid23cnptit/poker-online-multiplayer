@@ -8,7 +8,7 @@ export function useLogin() {
   return useMutation({
     mutationFn: async (request: LoginRequest) => {
       const response = await authApi.login(request)
-      await establishAuthenticatedSession(response, queryClient)
+      return establishAuthenticatedSession(response, queryClient)
     },
   })
 }

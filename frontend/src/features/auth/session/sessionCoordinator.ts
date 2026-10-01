@@ -4,6 +4,7 @@ import type { AuthResponse } from '../types/auth'
 import { currentProfileQueryOptions } from '../../profile/api/profileQueries'
 import { tokenVault } from './tokenVault'
 import { useSessionStore } from './sessionStore'
+import type { CurrentUser } from '../../profile/types/profile'
 
 let refreshInFlight: Promise<string> | null = null
 let restorationInFlight: Promise<void> | null = null
@@ -29,14 +30,15 @@ export async function refreshAccessToken(): Promise<string> {
   return refreshInFlight
 }
 
-export async function establishAuthenticatedSession(response: AuthResponse, queryClient: QueryClient): Promise<void> {
+export async function establishAuthenticatedSession(response: AuthResponse, queryClient: QueryClient): Promise<CurrentUser> {
   const epoch = useSessionStore.getState().epoch
   tokenVault.storeRefreshToken(response.refreshToken)
   useSessionStore.getState().setAccessToken(response.accessToken)
   try {
-    await queryClient.fetchQuery(currentProfileQueryOptions())
+    const user = await queryClient.fetchQuery(currentProfileQueryOptions())
     if (useSessionStore.getState().epoch !== epoch) throw new Error('Session changed during sign in')
     useSessionStore.getState().markAuthenticated()
+    return user
   } catch (error) {
     clearAuthSession(queryClient)
     throw error
