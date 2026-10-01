@@ -42,26 +42,40 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ContextConfiguration(initializers = TestDatabaseSafetyInitializer.class)
 @SpringBootTest
 class OrphanedGameSessionReconciliationMySqlIntegrationTests {
-    @Autowired OrphanedGameSessionReconciliationService reconciliation;
-    @Autowired GameSessionRepository sessions;
-    @Autowired RoomRepository rooms;
-    @Autowired RoomPlayerRepository members;
-    @Autowired UserRepository users;
-    @Autowired PlayerProfileRepository profiles;
-    @Autowired AdminQueryService admin;
-    @Autowired RoomApplicationService roomApplication;
-    @Autowired JdbcTemplate jdbc;
+    @Autowired
+    OrphanedGameSessionReconciliationService reconciliation;
+    @Autowired
+    GameSessionRepository sessions;
+    @Autowired
+    RoomRepository rooms;
+    @Autowired
+    RoomPlayerRepository members;
+    @Autowired
+    UserRepository users;
+    @Autowired
+    PlayerProfileRepository profiles;
+    @Autowired
+    AdminQueryService admin;
+    @Autowired
+    RoomApplicationService roomApplication;
+    @Autowired
+    JdbcTemplate jdbc;
     private final List<Long> sessionIds = new ArrayList<>();
     private final List<Long> roomIds = new ArrayList<>();
     private final List<Long> userIds = new ArrayList<>();
 
     @AfterEach
     void cleanup() {
-        for (long id : sessionIds) jdbc.update("DELETE FROM game_sessions WHERE id=?", id);
-        for (long id : roomIds) jdbc.update("DELETE FROM room_players WHERE room_id=?", id);
-        for (long id : roomIds) jdbc.update("DELETE FROM rooms WHERE id=?", id);
-        for (long id : userIds) jdbc.update("DELETE FROM player_profiles WHERE user_id=?", id);
-        for (long id : userIds) jdbc.update("DELETE FROM users WHERE id=?", id);
+        for (long id : sessionIds)
+            jdbc.update("DELETE FROM game_sessions WHERE id=?", id);
+        for (long id : roomIds)
+            jdbc.update("DELETE FROM room_players WHERE room_id=?", id);
+        for (long id : roomIds)
+            jdbc.update("DELETE FROM rooms WHERE id=?", id);
+        for (long id : userIds)
+            jdbc.update("DELETE FROM player_profiles WHERE user_id=?", id);
+        for (long id : userIds)
+            jdbc.update("DELETE FROM users WHERE id=?", id);
     }
 
     @Test
@@ -121,8 +135,10 @@ class OrphanedGameSessionReconciliationMySqlIntegrationTests {
     void terminalSessionsAndWaitingRoomWithoutActiveSessionAreUntouched() {
         UserEntity owner = user(300);
         RoomEntity finishedRoom = room(owner, RoomStatus.FINISHED);
-        GameSessionEntity finished = session(finishedRoom, GameSessionStatus.FINISHED, Instant.parse("2026-09-01T01:00:00Z"));
-        GameSessionEntity aborted = session(finishedRoom, GameSessionStatus.ABORTED, Instant.parse("2026-09-01T02:00:00Z"));
+        GameSessionEntity finished = session(finishedRoom, GameSessionStatus.FINISHED,
+                Instant.parse("2026-09-01T01:00:00Z"));
+        GameSessionEntity aborted = session(finishedRoom, GameSessionStatus.ABORTED,
+                Instant.parse("2026-09-01T02:00:00Z"));
         RoomEntity waiting = room(owner, RoomStatus.WAITING);
         RoomPlayerEntity waitingMember = member(waiting, owner, 1, 250);
 
@@ -183,7 +199,7 @@ class OrphanedGameSessionReconciliationMySqlIntegrationTests {
     private static void assertFinalized(RoomPlayerEntity member) {
         assertThat(member.getTableChips()).isZero();
         assertThat(member.getSeatNumber()).isNull();
-        assertThat(member.getState()).isEqualTo(RoomPlayerState.SPECTATING);
+        assertThat(member.getPlayerState()).isEqualTo(RoomPlayerState.SPECTATING);
         assertThat(member.getLeftAt()).isNotNull();
     }
 }
